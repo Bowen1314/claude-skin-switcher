@@ -218,6 +218,12 @@
             </div>
           </header>
           <div class="settings-scroll">
+            <h2 id="sec-general" class="set-heading"></h2>
+            <dl class="details set-table">
+              <dt id="set-language-key"></dt>
+              <dd><button id="set-language" class="select dropdown" type="button"></button></dd>
+            </dl>
+
             <h2 id="sec-connection" class="set-heading"></h2>
             <dl class="details set-table">
               <dt id="set-status-key"></dt>
@@ -262,7 +268,31 @@
               <dt id="set-app-key"></dt>
               <dd id="set-app-name"></dd>
               <dt id="set-version-key"></dt>
-              <dd id="set-version"></dd>
+              <dd>
+                <span id="set-version"></span>
+                <button id="update-check" class="ghost flat" type="button">
+                  <span class="spinner" aria-hidden="true"></span>
+                  <span id="update-check-label"></span>
+                </button>
+                <span id="update-check-note" class="muted-text" role="status"></span>
+              </dd>
+              <dt id="set-update-key" hidden></dt>
+              <dd id="set-update" class="stack" hidden>
+                <div class="inline">
+                  <span id="update-text" role="status"></span>
+                  <button id="update-go" class="primary small" type="button"></button>
+                  <button id="update-cancel" class="tiny-link" type="button"></button>
+                  <button id="update-notes" class="tiny-link set-link" type="button"></button>
+                </div>
+                <div id="update-bar" class="progress" hidden><span id="update-bar-fill"></span></div>
+                <span id="update-error" class="error-text small-text" hidden></span>
+                <span id="update-hint" class="muted-text small-text"></span>
+              </dd>
+              <dt id="set-auto-key"></dt>
+              <dd>
+                <button id="auto-update" class="switch" type="button" role="switch"><span class="knob"></span></button>
+                <span id="auto-update-label"></span>
+              </dd>
               <dt id="set-source-key"></dt>
               <dd><button id="repo" class="tiny-link set-link" type="button"></button></dd>
             </dl>

@@ -40,6 +40,11 @@ let busy = false
 let confirmTimer = null
 let isShot = false
 let appVersion = ''
+let platform = ''
+let language = 'system' // the Settings choice: system | en | zh
+let autoUpdate = true
+let update = { status: 'idle', latest: null, progress: null, error: null }
+let checkedByClick = false // "You're up to date" only after a click
 const thumbs = new Map() // ref -> blob url
 const openGroups = new Set(['backdrop', 'vars'])
 
@@ -259,12 +264,15 @@ const renderStatus = () => {
   b.disabled = busy
   b.classList.toggle('busy', busy)
   $('install-label').textContent = busy ? S.installing : status.state === 'not-installed' ? S.install : S.reinstall
-  // The sidebar's only hint that Install lives in Settings. Never while still checking.
-  const attention = !busy && (status.state === 'not-installed' || Boolean(status.error))
+  // The sidebar's only hint that Install lives in Settings (never while still
+  // checking), or that a new version is ready to install.
+  const bridgeAttention = !busy && (status.state === 'not-installed' || Boolean(status.error))
+  const updateAttention = update.status === 'available' && Boolean(update.latest)
+  const hint = [bridgeAttention ? S.settingsAttention : null, updateAttention ? fill(S.updateAvailable, { v: update.latest }) : null].filter(Boolean).join(' · ')
 
-  $('settings-dot').hidden = !attention
-  $('settings-dot').title = attention ? S.settingsAttention : ''
-  $('nav-settings').setAttribute('aria-label', attention ? `${S.settingsNav} · ${S.settingsAttention}` : S.settingsNav)
+  $('settings-dot').hidden = hint === ''
+  $('settings-dot').title = hint
+  $('nav-settings').setAttribute('aria-label', hint ? `${S.settingsNav} · ${hint}` : S.settingsNav)
 }
 
 const showInstallResult = result => {
@@ -1626,10 +1634,116 @@ const renderSettingsAccount = () => {
   }
 }
 
+const renderLanguage = () => {
+  const select = $('set-language')
+
+  select.setOptions([
+    { value: 'system', label: S.langSystem },
+    { value: 'en', label: S.langEnglish },
+    { value: 'zh', label: S.langChinese },
+  ])
+  select.value = language
+}
+
+const setLanguage = async () => {
+  const choice = $('set-language').value
+
+  try {
+    applyLanguage(await api.setLanguage(choice))
+  } catch {
+    $('set-language').value = language
+  }
+}
+
+const renderAutoUpdate = () => {
+  $('auto-update').setAttribute('aria-checked', autoUpdate ? 'true' : 'false')
+}
+
+const toggleAutoUpdate = async () => {
+  autoUpdate = !autoUpdate
+  renderAutoUpdate()
+  try {
+    autoUpdate = (await api.setAutoUpdate(autoUpdate)).autoUpdate
+  } catch {
+    autoUpdate = !autoUpdate
+  }
+  renderAutoUpdate()
+}
+
+const updateErrorText = e => {
+  if (!e || e.during !== 'update') {
+    return ''
+  }
+
+  return e.code === 'move' ? S.updateMoveApp : e.code === 'verify' ? S.updateVerifyFailed : fill(S.updateFailed, { error: e.message })
+}
+
+// Version row (Check for updates) and, when there is one, the new-version row.
+const renderUpdate = () => {
+  const u = update
+  const checking = u.status === 'checking'
+  const working = u.status === 'downloading' || u.status === 'installing'
+  const check = $('update-check')
+  const checkError = u.error?.during === 'check'
+
+  check.disabled = checking || working
+  check.classList.toggle('busy', checking)
+  $('update-check-label').textContent = checking ? S.checkingUpdates : S.checkUpdates
+  $('update-check-note').textContent = checkError ? fill(S.checkFailed, { error: u.error.message }) : u.status === 'up-to-date' && checkedByClick ? S.upToDate : ''
+  $('update-check-note').classList.toggle('error-text', checkError)
+  const show = Boolean(u.latest) && (u.status === 'available' || working)
+
+  $('set-update-key').hidden = !show
+  $('set-update').hidden = !show
+  if (!show) {
+    return
+  }
+  const pct = Math.round((u.progress ?? 0) * 100)
+
+  $('update-text').textContent =
+    u.status === 'downloading' ? fill(S.updateDownloading, { v: u.latest, pct }) : u.status === 'installing' ? fill(S.updateInstalling, { v: u.latest }) : fill(S.updateAvailable, { v: u.latest })
+  $('update-go').hidden = working
+  $('update-notes').hidden = working
+  $('update-cancel').hidden = u.status !== 'downloading'
+  $('update-bar').hidden = u.status !== 'downloading'
+  $('update-bar-fill').style.width = `${pct}%`
+  const error = updateErrorText(u.error)
+
+  $('update-error').hidden = error === ''
+  $('update-error').textContent = error
+  const hint = platform === 'darwin' ? S.updateKeychainHint : platform === 'win32' ? S.updateWinHint : ''
+
+  $('update-hint').hidden = hint === '' || working
+  $('update-hint').textContent = hint
+}
+
+const setUpdate = next => {
+  update = next ?? update
+  renderUpdate()
+  renderStatus()
+}
+
+const checkUpdate = async () => {
+  checkedByClick = true
+  setUpdate({ ...update, status: 'checking', error: null })
+  setUpdate(await api.checkUpdate().catch(error => ({ ...update, status: 'idle', error: { during: 'check', code: 'ipc', message: cleanError(error) } })))
+}
+
+const startUpdate = async () => {
+  setUpdate(await api.startUpdate().catch(error => ({ ...update, error: { during: 'update', code: 'ipc', message: cleanError(error) } })))
+}
+
 const showSettings = async () => {
   setView('settings')
   renderStatus()
   renderSettingsAccount()
+  renderLanguage()
+  renderAutoUpdate()
+  renderUpdate()
+  // Arrived from the sidebar dot for a new version (and the bridge is fine): bring its row into view.
+  if (!$('set-update').hidden && status.state !== 'not-installed' && !status.error) {
+    $('set-update').scrollIntoView({ block: 'nearest' })
+  }
   $('set-version').textContent = appVersion ? `v${appVersion}` : ''
   try {
     U.auth = await api.authState()
@@ -1792,6 +1906,14 @@ const texts = () => {
   t('set-app-name', 'appName')
   t('set-version-key', 'keyAppVersion')
   t('set-source-key', 'keySourceCode')
+  t('sec-general', 'secGeneral')
+  t('set-language-key', 'keyLanguage')
+  t('set-update-key', 'keyNewVersion')
+  t('set-auto-key', 'keyUpdates')
+  t('auto-update-label', 'autoUpdate')
+  t('update-go', 'updateNow')
+  t('update-cancel', 'cancel')
+  t('update-notes', 'releaseNotes')
   t('mode-dark', 'dark')
   t('mode-light', 'light')
   t('tab-overview', 'tabOverview')
@@ -1825,12 +1947,59 @@ const texts = () => {
   $('search').placeholder = S.searchPlaceholder
 }
 
+const DROPDOWN_LABELS = [
+  ['tag', 'tagFilter'],
+  ['up-library', 'librarySource'],
+  ['set-language', 'keyLanguage'],
+]
+
+const labelDropdowns = () => {
+  for (const [id, key] of DROPDOWN_LABELS) {
+    $(id).setAttribute('aria-label', S[key])
+  }
+}
+
+// Another language from Settings: new strings, everything drawn again in
+// place. View, selection, unapplied drafts and form contents stay.
+const applyLanguage = r => {
+  S = r.strings
+  language = r.language
+  document.documentElement.lang = r.lang === 'zh' ? 'zh-CN' : 'en'
+  window.Dropdown.close(false)
+  window.ColorPicker.close()
+  closeRowMenu()
+  hideAsk()
+  texts()
+  labelDropdowns()
+  renderLibraryList()
+  renderStatus()
+  if (subject) {
+    renderSkin()
+  }
+  if (G.loaded || G.loading) {
+    renderGrid()
+  }
+  renderUpload()
+  renderSettingsAccount()
+  renderLanguage()
+  renderAutoUpdate()
+  renderUpdate()
+}
+
 const wire = () => {
   // Custom dropdowns in place of <select>; same ids, .value and 'change'.
-  for (const [id, key] of [['tag', 'tagFilter'], ['up-library', 'librarySource']]) {
-    $(id).setAttribute('aria-label', S[key])
+  labelDropdowns()
+  for (const [id] of DROPDOWN_LABELS) {
     window.Dropdown.upgrade($(id))
   }
+  $('set-language').addEventListener('change', setLanguage)
+  $('auto-update').setAttribute('aria-labelledby', 'auto-update-label')
+  $('auto-update').addEventListener('click', toggleAutoUpdate)
+  $('update-check').addEventListener('click', checkUpdate)
+  $('update-go').addEventListener('click', startUpdate)
+  $('update-cancel').addEventListener('click', () => api.cancelUpdate().then(setUpdate, () => {}))
+  $('update-notes').addEventListener('click', () => api.openReleaseNotes())
+  api.onUpdate(setUpdate)
   $('lib-list').addEventListener('keydown', onListKey)
   $('nav-gallery').addEventListener('click', showGallery)
   $('nav-upload').addEventListener('click', showUpload)
@@ -1936,6 +2105,10 @@ const start = async () => {
   status = init.status
   isShot = init.shot !== null
   appVersion = await api.version().catch(() => '')
+  platform = init.platform
+  language = init.language
+  autoUpdate = init.autoUpdate
+  update = init.update ?? update
   document.documentElement.lang = init.lang === 'zh' ? 'zh-CN' : 'en'
   // Frameless window: the CSS reserves room for the traffic lights / caption buttons.
   document.body.classList.add(`platform-${init.platform}`)

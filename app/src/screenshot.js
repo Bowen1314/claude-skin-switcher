@@ -6,6 +6,7 @@ const { themeOf } = require('./selection')
 
 const VIEWS = new Set(['library', 'tune', 'code', 'gallery', 'detail', 'upload', 'settings'])
 const TABS = new Set(['overview', 'tune', 'code'])
+const DROPDOWNS = new Set(['tag', 'up-library', 'set-language'])
 const MIN_SIZE = { width: 860, height: 560 }
 const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/
 
@@ -18,7 +19,8 @@ const LOCAL_URL = /^http:\/\/(127\.0\.0\.1|localhost):\d{1,5}$/
 //   TS_TAB=overview|tune|code  the tab to open in the skin view (e.g. with TS_VIEW=detail)
 //   TS_OPEN_PICKER=accent|<var key>  open the colour picker for that Tune control
 //   TS_DELETE=confirm|menu     the delete confirmation or the library row menu (TS_SELECT skin)
-//   TS_OPEN_DROPDOWN=tag|up-library  open that dropdown once the view is drawn
+//   TS_OPEN_DROPDOWN=tag|up-library|set-language  open that dropdown once the view is drawn
+//   TS_UPDATE=available|downloading  Settings → About shows that update state (no network)
 //   TS_SIZE=<w>x<h>            window content size (at least 860x560; default 980x640)
 //   TS_GALLERY_URL / TS_GOOGLE_URL=http://127.0.0.1:<port>  local mock servers
 //   TS_CLIENT_ID=none|<id>     blank the Google client id, or use a mock one (with TS_GOOGLE_URL)
@@ -63,7 +65,8 @@ const screenshotOptions = env => {
     token,
     draft,
     tab: TABS.has(env.TS_TAB) ? env.TS_TAB : null,
-    dropdown: env.TS_OPEN_DROPDOWN === 'tag' || env.TS_OPEN_DROPDOWN === 'up-library' ? env.TS_OPEN_DROPDOWN : null,
+    dropdown: DROPDOWNS.has(env.TS_OPEN_DROPDOWN) ? env.TS_OPEN_DROPDOWN : null,
+    update: env.TS_UPDATE === 'available' || env.TS_UPDATE === 'downloading' ? env.TS_UPDATE : null,
     del: env.TS_DELETE === 'confirm' || env.TS_DELETE === 'menu' ? env.TS_DELETE : null,
     picker: typeof env.TS_OPEN_PICKER === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(env.TS_OPEN_PICKER) ? env.TS_OPEN_PICKER : null,
     size: size ? { width: Math.max(MIN_SIZE.width, Number(size[1])), height: Math.max(MIN_SIZE.height, Number(size[2])) } : null,

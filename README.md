@@ -52,7 +52,8 @@ English | [中文](README_CN.md)
 - **Upload with Google.** Sign in with Google to share a skin under a public name you choose. The app asks Google for the `openid` scope only, so the gallery never sees your email or name. [Privacy](docs/gallery-and-privacy.md#what-is-stored)
 - **Save as new.** Save the current tuning as a separate skin and upload it, no code required.
 - **Safe by design.** A skin is data: a JSON file and an SVG drawing. Scripts, external links and embedded content are refused by the gallery on upload, by the app on download, by the plugin, and by Claude itself. [Security design](docs/security.md)
-- **Native feel.** No title bar, light and dark themes, English and Chinese, and a Settings page with the Claude connection status and one-click plugin install.
+- **Native feel.** No title bar, light and dark themes, English and Chinese (follows the system or set in **Settings**), and a Settings page with the Claude connection status and one-click plugin install.
+- **In-app updates.** The app checks GitHub Releases for a new version and installs it when you click **Update** in **Settings → About**. Every download is checked against the release's SHA-512 checksum first.
 
 ## Screenshots
 
@@ -109,6 +110,8 @@ The builds are not code-signed yet:
 1. In the app, open **Settings** and click **Install** next to the Claude connection. This adds the bridge plugin to Claude Code.
 2. Start a new Claude session. Sessions that were already open don't load new plugins.
 3. Pick a skin and click **Apply**. Open sessions follow within about 2 seconds, and **Settings** shows **Connected**.
+
+Later versions update from **Settings → About**: click **Update** when a new version is listed. On macOS this works when the app is in Applications (or another folder you can write to), not when it runs from the disk image.
 
 ## Make and share a skin
 

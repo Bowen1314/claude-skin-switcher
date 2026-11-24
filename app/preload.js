@@ -15,6 +15,21 @@ contextBridge.exposeInMainWorld('switcher', {
   install: () => call('bridge:install'),
   openRepo: () => call('repo:open'),
 
+  // Preferences: language 'system' | 'en' | 'zh' -> { lang, language, strings }.
+  setLanguage: choice => call('prefs:setLanguage', String(choice)),
+  setAutoUpdate: on => call('prefs:setAutoUpdate', on === true),
+
+  // Updates: main checks GitHub, downloads, verifies and installs; the window
+  // only shows the state and forwards clicks.
+  updateState: () => call('update:state'),
+  checkUpdate: () => call('update:check'),
+  startUpdate: () => call('update:start'),
+  cancelUpdate: () => call('update:cancel'),
+  openReleaseNotes: () => call('update:notes'),
+  onUpdate: fn => {
+    ipcRenderer.on('update:state', (_event, state) => fn(state))
+  },
+
   library: () => call('library:list'),
   // { library, selection, reset }: re-read on focus; reset is the ref of a stale selection.
   refreshLibrary: () => call('library:refresh'),

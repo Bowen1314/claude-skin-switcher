@@ -42,6 +42,9 @@
   <h2>Signing in with Google</h2>
   <p>Signing in is only needed to upload skins. The app asks Google for the <code>openid</code> scope only, so Google tells us an account identifier and nothing else: not your email address, name or photo. The gallery stores a salted one-way hash of that identifier to recognise you, plus the public name you choose. Your sign-in stays encrypted on your own computer.</p>
 
+  <h2>Updates</h2>
+  <p>To check for and download new versions, the app contacts <code>api.github.com</code> and <code>github.com</code> (GitHub then serves the file from its own download host). These requests carry no personal data, only the app's name and version. Automatic checks can be turned off in Settings; nothing is installed until you click Update.</p>
+
   <h2>What is public</h2>
   <p>Skins you upload, the public name you chose, and upload dates are public. You can delete your skins at any time from the app.</p>
 

@@ -1,23 +1,26 @@
 'use strict'
 
+const { execFile, spawn } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-const { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, safeStorage, shell } = require('electron')
+const { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, net, safeStorage, shell } = require('electron')
 
 const { bridgeStatus, readHeartbeat } = require('./src/bridge')
 const constants = require('./src/constants')
 const { loadDeps } = require('./src/deps')
 const { createGallery, checkName } = require('./src/gallery')
-const { langFor, stringsFor } = require('./src/i18n')
+const { stringsFor } = require('./src/i18n')
 const { checkInstalled, installBridge } = require('./src/installer')
 const { bundledSkinsDir, marketplaceSources } = require('./src/marketplace')
 const { homeDir, stateDir, tildify } = require('./src/paths')
+const { createPrefs, resolveLang } = require('./src/prefs')
 const { screenshotOptions } = require('./src/screenshot')
 const { createService } = require('./src/service')
 const { REF } = require('./src/skin-render')
 const { createTokenStore } = require('./src/token-store')
+const { CHECK_DELAY_MS, CHECK_EVERY_MS, createUpdater, netGet, updateEndpoints } = require('./src/updater')
 
 const INDEX_FILE = path.join(__dirname, 'renderer', 'index.html')
 
@@ -26,6 +29,9 @@ const home = homeDir(process.env, process.platform, os.homedir())
 const dir = stateDir(home, process.platform)
 
 let lang = 'en'
+let prefs = null
+let updater = null
+let shotUpdate = null // screenshot runs: a fixed update state, no network
 let installed = null // null until the first check finishes
 let installing = false
 let window = null
@@ -42,6 +48,8 @@ const refreshInstalled = async () => {
 
   return installed
 }
+
+const systemLanguages = () => (shot ? [app.getLocale()] : app.getPreferredSystemLanguages())
 
 const currentStatus = async () => ({ ...bridgeStatus({ heartbeat: await readHeartbeat(dir), installed, now: Date.now() }), installing })
 
@@ -129,6 +137,9 @@ const plain = value => JSON.parse(JSON.stringify(value ?? null))
 const registerIpc = () => {
   handle('app:init', async () => ({
     lang,
+    language: prefs.get().language,
+    autoUpdate: prefs.get().autoUpdate,
+    update: updateState(),
     platform: process.platform,
     strings: stringsFor(lang),
     library: await service.library(),
@@ -211,6 +222,99 @@ const registerIpc = () => {
   })
 
   handle('repo:open', () => shell.openExternal(constants.REPO_URL))
+
+  // Language: 'system' | 'en' | 'zh'. The window re-renders with the strings it gets back.
+  handle('prefs:setLanguage', async choice => {
+    const next = await prefs.set({ language: String(choice ?? '') })
+
+    lang = resolveLang(next.language, systemLanguages())
+    window?.setTitle(stringsFor(lang).appName)
+
+    return { lang, language: next.language, strings: stringsFor(lang) }
+  })
+  handle('prefs:setAutoUpdate', async on => {
+    const next = await prefs.set({ autoUpdate: on === true })
+
+    scheduleChecks()
+
+    return { autoUpdate: next.autoUpdate }
+  })
+
+  handle('update:state', updateState)
+  handle('update:check', () => (updater ? updater.check({ manual: true }) : updateState()))
+  // Only ever started by a click on Update (or TS_UPDATE_AUTOCLICK against a local mock).
+  handle('update:start', () => (updater ? updater.update() : updateState()))
+  handle('update:cancel', () => (updater ? updater.cancel() : updateState()))
+  handle('update:notes', () => updater?.openNotes())
+}
+
+// ---------- updates ----------
+
+const updateState = () => (shotUpdate ?? updater?.state() ?? { status: 'idle', current: app.getVersion(), latest: null, notesUrl: null, progress: null, error: null })
+
+const sendUpdate = state => {
+  if (window !== null && !window.isDestroyed()) {
+    window.webContents.send('update:state', state)
+  }
+}
+
+let checkTimer = null
+let checkInterval = null
+
+const scheduleChecks = () => {
+  clearTimeout(checkTimer)
+  clearInterval(checkInterval)
+  if (updater === null || !prefs.get().autoUpdate) {
+    return
+  }
+  checkTimer = setTimeout(() => updater.check(), CHECK_DELAY_MS)
+  checkInterval = setInterval(() => updater.check(), CHECK_EVERY_MS)
+}
+
+const runFile = (cmd, args) =>
+  new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 120000, maxBuffer: 1024 * 1024 }, (error, stdout) => (error ? reject(error) : resolve(stdout)))
+  })
+
+const makeUpdater = () => {
+  const endpoints = updateEndpoints(process.env)
+  let clicked = false
+  // Local test runs: the relaunched app keeps the temp HOME, the mock and the profile folder.
+  const relaunch = endpoints.local
+    ? { open: ['-n', '--env', `HOME=${home}`, '--env', `TS_UPDATE_URL=${endpoints.local}`], args: process.argv.filter(a => a.startsWith('--user-data-dir=')) }
+    : { open: [], args: [] }
+  const u = createUpdater({
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    get: netGet(net),
+    endpoints,
+    tempRoot: path.join(app.getPath('userData'), 'updates'),
+    exePath: app.getPath('exe'),
+    isPackaged: app.isPackaged,
+    run: runFile,
+    spawnDetached: (cmd, args) => spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref(),
+    quit: () => app.quit(),
+    openExternal: url => shell.openExternal(url),
+    relaunch,
+    onState: state => {
+      sendUpdate(state)
+      if (endpoints.autoclick && !clicked && state.status === 'available') {
+        clicked = true
+        setTimeout(() => u.update(), 0)
+      }
+    },
+  })
+
+  return u
+}
+
+// Screenshot runs (TS_UPDATE=available|downloading): the About row in that state.
+const fakeUpdate = kind => {
+  const [a, b, c] = app.getVersion().split('.').map(Number)
+  const latest = `${a}.${b}.${c + 1}`
+
+  return { status: kind, current: app.getVersion(), latest, notesUrl: null, progress: kind === 'downloading' ? 0.42 : null, error: null }
 }
 
 const capture = async () => {
@@ -308,7 +412,16 @@ if (!shot && !app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(async () => {
-    lang = langFor(app.getLocale())
+    // Screenshot runs keep preferences in memory and take "System" from --lang.
+    prefs = createPrefs({ file: shot ? null : path.join(app.getPath('userData'), 'preferences.json') })
+    await prefs.load()
+    lang = resolveLang(prefs.get().language, systemLanguages())
+    if (shot) {
+      shotUpdate = shot.update ? fakeUpdate(shot.update) : null
+    } else {
+      updater = makeUpdater()
+      updater.cleanup()
+    }
     if (shot) {
       app.dock?.hide()
       if (shot.scheme !== null) {
@@ -326,6 +439,7 @@ if (!shot && !app.requestSingleInstanceLock()) {
     }
     registerIpc()
     createWindow()
+    scheduleChecks()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow()

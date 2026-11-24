@@ -41,6 +41,10 @@ The first time you upload, you pick a public name (a handle), such as `ocean-fan
 - **Report** flags a skin that is offensive, misleading or infringing. Each network can report a skin once; at three reports the skin is hidden until a person reviews it.
 - Accounts that upload abusive skins can be blocked; their skins are hidden.
 
+## Updates
+
+To check for and download new versions, the app contacts `api.github.com` and `github.com` (GitHub then serves the file from its own download host). These requests carry no personal data, only the app's name and version. Automatic checks can be turned off in **Settings → About**; nothing is installed until you click **Update**.
+
 ## What is stored
 
 | Data | Where | Public? |
@@ -50,6 +54,7 @@ The first time you upload, you pick a public name (a handle), such as `ocean-fan
 | A salted one-way hash of your Google account id | gallery database | no |
 | A salted one-way hash of your network address, for download counts and reports | gallery database | no |
 | Google refresh token | your computer, encrypted | no |
+| App preferences (language, automatic update checks) | your computer | no |
 | Your email, name, photo, the raw Google id, your IP address | **not stored anywhere** | — |
 
 The gallery runs on Cloudflare Workers and D1, which process requests to serve it. Nothing is sold or shared. Questions go to [GitHub issues](https://github.com/Bowen1314/claude-skin-switcher/issues).

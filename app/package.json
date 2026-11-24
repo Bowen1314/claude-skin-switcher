@@ -1,7 +1,7 @@
 {
   "name": "claude-theme-switcher",
   "productName": "Claude Skin Switcher",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Pick a look for the Claude desktop app; a small bridge plugin applies it.",
   "author": "Soso Technologies LLC",
@@ -71,6 +71,13 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ]
     },
@@ -90,6 +97,13 @@
     "nsis": {
       "oneClick": true,
       "perMachine": false
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Bowen1314",
+        "repo": "claude-skin-switcher"
+      }
+    ]
   }
 }

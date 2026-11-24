@@ -25,12 +25,17 @@ test('screenshot options are validated', () => {
     draft: null,
     tab: null,
     dropdown: null,
+    update: null,
     del: null,
     picker: null,
     size: null,
   })
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_OPEN_DROPDOWN: 'tag' }).dropdown, 'tag')
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_OPEN_DROPDOWN: 'x' }).dropdown, null)
+  assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_OPEN_DROPDOWN: 'set-language' }).dropdown, 'set-language')
+  assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'available' }).update, 'available')
+  assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'downloading' }).update, 'downloading')
+  assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'installing' }).update, null)
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_DELETE: 'menu' }).del, 'menu')
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_DELETE: 'yes' }).del, null)
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_OPEN_PICKER: 'accent' }).picker, 'accent')

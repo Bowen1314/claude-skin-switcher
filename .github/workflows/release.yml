@@ -46,6 +46,9 @@ jobs:
           test -n "$GOOGLE_CLIENT_SECRET" || { echo "GOOGLE_CLIENT_SECRET repo secret is missing"; exit 1; }
           node -e 'require("fs").writeFileSync("src/google-secret.json", JSON.stringify({ secret: process.env.GOOGLE_CLIENT_SECRET }) + "\n")'
 
+      # One invocation builds arm64 and x64 (dmg + zip), so a single
+      # latest-mac.yml lists both zips. The zips and latest*.yml are what the
+      # in-app updater downloads and verifies (src/updater.js).
       - name: Build macOS installers
         if: runner.os == 'macOS'
         run: npm run dist:mac
@@ -60,7 +63,9 @@ jobs:
           name: installers-${{ runner.os }}
           path: |
             app/dist/*.dmg
+            app/dist/*.zip
             app/dist/*.exe
+            app/dist/latest*.yml
           if-no-files-found: error
 
   release:
@@ -80,5 +85,8 @@ jobs:
         with:
           files: |
             installers/*.dmg
+            installers/*.zip
             installers/*.exe
+            installers/latest-mac.yml
+            installers/latest.yml
           fail_on_unmatched_files: true
