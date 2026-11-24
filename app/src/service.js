@@ -27,6 +27,23 @@ const withBasedOn = (payload, basedOn) => (typeof basedOn === 'string' ? { ...pa
 // being swapped by writeSkinDir is briefly missing).
 const SETTLE_MS = 150
 
+const sortKeys = v =>
+  v !== null && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, sortKeys(v[k])])) : v
+// A validated skin without the keys the folder name and meta decide.
+const skinBody = skin => {
+  const { author, version, ...body } = skin
+
+  return JSON.stringify(sortKeys(body))
+}
+
+// Which handles the duplicate cleanup already ran for. main.js keeps this in
+// the preferences file; tests and screenshot runs keep it in memory.
+const memoryMarks = () => {
+  const done = new Set()
+
+  return { has: async key => done.has(key), add: async key => void done.add(key) }
+}
+
 const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) => {
   const libDir = skinsDir(dir)
   const store = createSelectionStore(dir)
@@ -35,6 +52,10 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
   let handle // undefined = not asked yet, null = no public name chosen
   let idCache = null // { idToken, expiresAt }
   let staged = null // the checked upload payload
+  let stagedFrom = null // the library skin it was read from, or null for a folder
+  let merging = Promise.resolve() // merges run one at a time
+  const leftovers = new Map() // from -> to: merged, but the old folder could not be removed yet
+  const marks = config.mergeMarks ?? memoryMarks()
 
   const configured = () => typeof config.clientId === 'string' && config.clientId !== ''
   const entry = ref => entries.find(e => e.ref === ref)
@@ -72,6 +93,105 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
   }
 
   const myHandle = () => (typeof handle === 'string' ? handle : null)
+
+  // Both skins read from disk now and draw exactly the same thing: same
+  // skin.json apart from author/version, same scene.svg byte for byte. (The
+  // fingerprint is too loose here: it ignores a recolor of a scene skin.)
+  const sameSkin = async (a, b) => {
+    const [ea, eb] = await Promise.all([readEntry(libDir, a, deps), readEntry(libDir, b, deps)])
+
+    if (!ea.ok || !eb.ok || ea.hasScene !== eb.hasScene || skinBody(ea.skin) !== skinBody(eb.skin)) {
+      return false
+    }
+
+    return !ea.hasScene || (await readScene(libDir, a, deps)) === (await readScene(libDir, b, deps))
+  }
+
+  // A skin made here (`from`, source local) whose upload (`to`, source upload)
+  // holds the same files: keep only `to`. `to` is already on disk; then
+  // selection.json moves the theme and tuning to `to` in one atomic write; only
+  // then does the `from` folder go. A crash at any point leaves the active
+  // theme naming a skin that exists. Resolves to { from, to, removed } or null.
+  const mergeInto = (from, to) => {
+    const run = merging.then(async () => {
+      if (from === to) {
+        return null
+      }
+      const [a, b] = await Promise.all([readEntry(libDir, from, deps), readEntry(libDir, to, deps)])
+
+      if (!a.ok || a.meta.source !== 'local' || !b.ok || b.meta.source !== 'upload' || !(await sameSkin(from, to))) {
+        return null
+      }
+      try {
+        await store.moveRef(from, to)
+      } catch (error) {
+        leftovers.set(from, to)
+        throw error
+      }
+      let removed = true
+
+      try {
+        await removeSkinDir(libDir, from)
+        leftovers.delete(from)
+      } catch {
+        removed = false
+        leftovers.set(from, to)
+      }
+
+      return { from, to, removed }
+    })
+
+    merging = run.catch(() => null)
+
+    return run
+  }
+
+  // Once per public name: earlier versions kept the local original of an
+  // uploaded skin next to <handle>.<slug>. Merge each pair whose files are still the same;
+  // a local skin edited after its upload stays. Needs the handle in memory
+  // (the app never asks the gallery just for this).
+  const mergeUploaded = async () => {
+    const moved = []
+
+    // Folders a merge could not remove before: tried again on every refresh.
+    for (const [from, to] of [...leftovers]) {
+      const m = await mergeInto(from, to).catch(() => null)
+
+      if (m === null) {
+        leftovers.delete(from)
+      } else if (m.removed) {
+        moved.push({ from, to })
+      }
+    }
+    const h = myHandle()
+
+    if (h === null || (await marks.has(h))) {
+      return moved
+    }
+    let failed = false
+
+    for (const e of entries) {
+      const to = e.ok && e.owner === config.localOwner && e.meta.source === 'local' ? makeRef(h, e.slug) : null
+
+      if (to === null || entry(to) === undefined) {
+        continue
+      }
+      try {
+        const m = await mergeInto(e.ref, to)
+
+        if (m !== null) {
+          moved.push({ from: m.from, to: m.to })
+        }
+      } catch {
+        failed = true
+      }
+    }
+    if (!failed) {
+      await marks.add(h)
+    }
+
+    return moved
+  }
 
   // The gallery or built-in skin in the library that draws the same thing
   // (shared/fingerprint.js), or null. Skins under the person's own public name
@@ -199,12 +319,19 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
 
     library: refresh,
     // The window came back to the front: read the library again and reset a
-    // selection that points at a skin that is gone or broken.
+    // selection that points at a skin that is gone or broken. `moved` lists
+    // skins merged into their upload ({ from, to }): the window moves its
+    // draft and open skin along.
     refresh: async () => {
       await refresh()
+      const moved = await mergeUploaded()
+
+      if (moved.length > 0) {
+        await refresh()
+      }
       const reset = await healSelection()
 
-      return { library: entries, selection: await store.read(), reset }
+      return { library: entries, selection: await store.read(), reset, moved }
     },
     // Skins the Upload view may offer: ones made here or uploaded by this person.
     uploadable: () => entries.filter(isUploadable).map(e => e.ref),
@@ -378,6 +505,7 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
       const imported = await importFolder(folder)
 
       staged = null
+      stagedFrom = null
       if (!imported.ok) {
         return { ok: false, errors: imported.errors, label: path.basename(folder) }
       }
@@ -404,6 +532,7 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
       const info = { label: ref, name: e.skin.name, slug: e.slug }
 
       staged = null
+      stagedFrom = null
       if (!isUploadable(e)) {
         return { ok: false, errors: ['Only skins you made can be uploaded.'], notMine: true, ...info }
       }
@@ -421,10 +550,15 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
         return { ok: false, errors: [copyMessage(copy)], copyOf: copy, ...info }
       }
       staged = withBasedOn(prep.payload, basedOn)
+      stagedFrom = ref
 
       return { ok: true, errors: [], ...info }
     },
 
+    // A skin from the library that was made here (local.<slug>) is kept once,
+    // as <handle>.<slug>: its tuning and the applied theme move there and the
+    // local folder goes (only if its files still match what was sent).
+    // `moved` is { from, to } then, with the selection after the move.
     upload: async () => {
       if (staged === null) {
         throw new Error('Nothing checked to upload')
@@ -457,12 +591,21 @@ const createService = ({ dir, deps, bundledDir, gallery, tokenStore, config }) =
       const meta = { author: owner, version: result.version, source: 'upload', ...(payload.basedOn ? { basedOn: payload.basedOn } : {}) }
       const saved = await saveSkin({ libDir, owner, skin: payload.skin, scene: payload.scene, meta, deps })
 
+      let moved = null
+
       if (saved.ok) {
         await store.touchIfActive(saved.ref)
+        if (stagedFrom !== null && staged === payload) {
+          const m = await mergeInto(stagedFrom, saved.ref).catch(() => null)
+
+          moved = m === null ? null : { from: m.from, to: m.to }
+          // Sending the same check again updates the upload in place.
+          stagedFrom = saved.ref
+        }
       }
       await refresh()
 
-      return { ok: true, ...result, ref: saved.ok ? saved.ref : result.ref, savedOk: saved.ok }
+      return { ok: true, ...result, ref: saved.ok ? saved.ref : result.ref, savedOk: saved.ok, moved, selection: await store.read() }
     },
 
     // Delete a skin from the local library (never official ones). If it is the

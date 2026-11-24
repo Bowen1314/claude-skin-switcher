@@ -12,7 +12,46 @@
   const MARGIN = 8
   const GAP = 4
   let seq = 0
-  let current = null // { button, root, outside, place }
+  let current = null // { button, root, outside, place, onScroll, frame }
+
+  // Where the list goes for a trigger rect `a`, list size `size` and viewport
+  // `view`: 4px under the trigger, flipped up when only the space above fits,
+  // always kept inside the viewport margin.
+  const position = (a, size, view) => {
+    let top = a.bottom + GAP
+
+    if (top + size.height > view.height - MARGIN && a.top - GAP - size.height >= MARGIN) {
+      top = a.top - GAP - size.height
+    }
+    const left = Math.min(a.left, view.width - size.width - MARGIN)
+
+    return {
+      left: Math.round(Math.max(MARGIN, left)),
+      top: Math.round(Math.max(MARGIN, Math.min(top, view.height - size.height - MARGIN))),
+    }
+  }
+
+  // True when some of rect `a` is inside every clip rect (scrolling ancestors
+  // and the viewport), i.e. the trigger can still be seen.
+  const visibleIn = (a, clips) =>
+    a.width > 0 && a.height > 0 && clips.every(c => a.bottom > c.top && a.top < c.bottom && a.right > c.left && a.left < c.right)
+
+  // Ancestors that clip the trigger (any overflow other than visible), plus the viewport.
+  const clipRects = el => {
+    const out = [{ top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth }]
+
+    for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const cs = getComputedStyle(n)
+
+      if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+        out.push(n.getBoundingClientRect())
+      }
+    }
+
+    return out
+  }
+
+  const same = (a, b) => b !== null && a.top === b.top && a.left === b.left && a.bottom === b.bottom && a.right === b.right
 
   const make = (tag, className, text) => {
     const n = document.createElement(tag)
@@ -34,7 +73,9 @@
       return
     }
     current = null
+    cancelAnimationFrame(c.frame)
     document.removeEventListener('pointerdown', c.outside, true)
+    document.removeEventListener('scroll', c.onScroll, true)
     window.removeEventListener('resize', c.place)
     c.root.remove()
     c.button.setAttribute('aria-expanded', 'false')
@@ -44,20 +85,31 @@
     }
   }
 
-  const place = (root, button) => {
-    const a = button.getBoundingClientRect()
-    const h = root.offsetHeight
-    const w = root.offsetWidth
-    let top = a.bottom + GAP
+  // Keeps the open list attached to its trigger. Closes it (without moving
+  // focus, which would scroll the trigger back) when the trigger is gone,
+  // hidden, or scrolled out of its container. Returns the rect it used.
+  const place = (root, button, last = null) => {
+    if (!button.isConnected || button.getClientRects().length === 0) {
+      close(false)
 
-    // Flip up when there is no room below and more room above.
-    if (top + h > window.innerHeight - MARGIN && a.top - GAP - h >= MARGIN) {
-      top = a.top - GAP - h
+      return null
     }
-    const left = Math.min(a.left, window.innerWidth - w - MARGIN)
+    const a = button.getBoundingClientRect()
 
-    root.style.left = `${Math.round(Math.max(MARGIN, left))}px`
-    root.style.top = `${Math.round(Math.max(MARGIN, Math.min(top, window.innerHeight - h - MARGIN)))}px`
+    if (same(a, last)) {
+      return last
+    }
+    if (!visibleIn(a, clipRects(button))) {
+      close(false)
+
+      return null
+    }
+    const p = position(a, { width: root.offsetWidth, height: root.offsetHeight }, { width: window.innerWidth, height: window.innerHeight })
+
+    root.style.left = `${p.left}px`
+    root.style.top = `${p.top}px`
+
+    return a
   }
 
   const upgrade = button => {
@@ -190,11 +242,40 @@
       document.addEventListener('pointerdown', outside, true)
       document.body.append(root)
       root.style.minWidth = `${Math.round(button.getBoundingClientRect().width)}px`
-      const placeIt = () => place(root, button)
+      let last = null
+      const placeIt = () => {
+        last = place(root, button, last)
+      }
+      const replace = () => {
+        last = place(root, button, null)
+      }
+      // Scrolling any container (but not the list itself) moves the trigger.
+      const onScroll = e => {
+        if (!(e.target instanceof Node && root.contains(e.target))) {
+          placeIt()
+        }
+      }
+      const entry = { button, root, outside, place: replace, onScroll, frame: 0 }
+      // Layout changes that fire no event (content above the trigger growing,
+      // a re-render, the view being hidden) are caught once per frame.
+      const tick = () => {
+        if (current !== entry) {
+          return
+        }
+        placeIt()
+        if (current === entry) {
+          entry.frame = requestAnimationFrame(tick)
+        }
+      }
 
-      window.addEventListener('resize', placeIt)
+      current = entry
+      window.addEventListener('resize', replace)
+      document.addEventListener('scroll', onScroll, true)
       placeIt()
-      current = { button, root, outside, place: placeIt }
+      if (current !== entry) {
+        return
+      }
+      entry.frame = requestAnimationFrame(tick)
       button.setAttribute('aria-expanded', 'true')
       button.setAttribute('aria-controls', listId)
       setActive(active)
@@ -214,5 +295,10 @@
     return button
   }
 
-  window.Dropdown = { upgrade, open: button => button.openList?.(), close }
+  if (typeof window !== 'undefined') {
+    window.Dropdown = { upgrade, open: button => button.openList?.(), close }
+  }
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { position, visibleIn }
+  }
 })()

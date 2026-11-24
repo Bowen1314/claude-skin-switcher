@@ -1542,6 +1542,8 @@ const showUpload = async () => {
     // keep the last state
   }
   renderUpload()
+  // With the public name known, main folds skins left next to their upload (once).
+  refreshLibrary(true)
   await loadMine()
 }
 
@@ -1751,6 +1753,7 @@ const showSettings = async () => {
     // keep the last state
   }
   renderSettingsAccount()
+  refreshLibrary(true)
 }
 
 // "This is <name> by <author> from the gallery…", from the structured answer.
@@ -1778,6 +1781,43 @@ const deleteMine = async item => {
   await loadMine()
 }
 
+// A skin made here was merged into its upload (service.js mergeInto): its
+// draft and thumbnail follow it, and the selection comes from main.
+const followMoves = (moves, sel) => {
+  const list = Array.isArray(moves) ? moves : []
+
+  if (list.length > 0 && sel) {
+    selection = { theme: sel.theme, settings: sel.settings ?? {} }
+  }
+  for (const { from, to } of list) {
+    drafts.move(from, to)
+    // The thumbnail of `to` was drawn without the tuning that just moved onto it.
+    thumbs.delete(from)
+    thumbs.delete(to)
+    if (U.check?.label === from) {
+      U.check = { ...U.check, label: to }
+    }
+  }
+
+  return list
+}
+
+// The open skin was one of them (either side): show it under its new ref.
+const followSubject = async moves => {
+  const m = moves.find(x => subject?.kind === 'library' && (x.from === subject.ref || x.to === subject.ref))
+
+  if (m === undefined || entryByRef(m.to) === undefined) {
+    return false
+  }
+  if (view === 'skin') {
+    await showLibrary(m.to)
+  } else {
+    subject = { ...subject, ref: m.to, entry: entryByRef(m.to) }
+  }
+
+  return true
+}
+
 const sendUpload = async () => {
   U.sending = true
   U.result = null
@@ -1791,9 +1831,16 @@ const sendUpload = async () => {
       return
     }
     U.result = fill(S.uploadedNew, { ref: r.ref, v: r.version })
+    const moved = followMoves(r.moved ? [r.moved] : [], r.selection)
+
     library = await api.library()
     await Promise.all(library.map(thumbFor))
     renderLibraryList()
+    renderUploadLibrary()
+    if (moved.length > 0 && $('up-library').value === '') {
+      $('up-library').value = moved[0].to
+    }
+    await followSubject(moved)
   } catch (error) {
     U.result = fill(S.uploadFailed, { error: serverError(cleanError(error)) })
   } finally {
@@ -1821,11 +1868,16 @@ const poll = async () => {
 const REFRESH_MIN_MS = 1000
 let lastLibraryRefresh = 0
 let libraryRefreshing = false
+let refreshAgain = false
 
-const refreshLibrary = async () => {
+// force === true skips the once-a-second limit (after the public name is known).
+const refreshLibrary = async force => {
   const now = Date.now()
 
-  if (libraryRefreshing || now - lastLibraryRefresh < REFRESH_MIN_MS) {
+  if (libraryRefreshing && force === true) {
+    refreshAgain = true
+  }
+  if (libraryRefreshing || (force !== true && now - lastLibraryRefresh < REFRESH_MIN_MS)) {
     return
   }
   lastLibraryRefresh = now
@@ -1835,6 +1887,7 @@ const refreshLibrary = async () => {
     const next = fresh.library
     // The applied skin was gone or broken: Claude is back to its default look.
     const selChanged = Boolean(fresh.reset)
+    const moved = followMoves(fresh.moved, fresh.selection)
 
     if (selChanged) {
       selection = { theme: fresh.selection.theme, settings: fresh.selection.settings ?? {} }
@@ -1855,8 +1908,10 @@ const refreshLibrary = async () => {
         renderCode()
       }
     }
-    // The skin on screen is gone: fall back to Claude default.
-    if (view === 'skin' && subject?.kind === 'library' && entryByRef(subject.ref) === undefined) {
+    // The skin on screen was merged into its upload: show that. Gone: fall back to Claude default.
+    if (await followSubject(moved)) {
+      // shown under its new ref
+    } else if (view === 'skin' && subject?.kind === 'library' && entryByRef(subject.ref) === undefined) {
       await showLibrary('default')
     } else if (selChanged && view === 'skin' && subject && subject.kind !== 'gallery') {
       renderHead()
@@ -1865,6 +1920,10 @@ const refreshLibrary = async () => {
     // keep the list we have
   } finally {
     libraryRefreshing = false
+    if (refreshAgain) {
+      refreshAgain = false
+      refreshLibrary(true)
+    }
   }
 }
 

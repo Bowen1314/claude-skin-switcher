@@ -154,6 +154,32 @@ const createSelectionStore = dir => {
         return { theme: switched ? 'default' : cur.theme, settings }
       }).then(() => switched)
     },
+    // A skin now lives under another ref (a library skin merged into its
+    // upload): the theme and its settings follow it in one atomic write. The
+    // old ref's settings win; settings of `to` stay when `from` has none, so a
+    // repeat after a crash never drops what was already moved. Resolves to
+    // whether the file changed.
+    moveRef: (from, to) => {
+      if (!REF.test(from) || !REF.test(to)) {
+        return Promise.reject(new Error(`Not a skin: ${String(REF.test(from) ? to : from)}`))
+      }
+      let changed = false
+
+      return mutate(cur => {
+        if (cur.theme !== from && !(from in cur.settings)) {
+          return null
+        }
+        const settings = { ...cur.settings }
+
+        if (from in settings) {
+          settings[to] = settings[from]
+          delete settings[from]
+        }
+        changed = true
+
+        return { theme: cur.theme === from ? to : cur.theme, settings }
+      }).then(() => changed)
+    },
     // After a skin's files change: rewrite (new mtime) only if the file exists
     // and names that skin, so the bridge reloads it.
     touchIfActive: ref => mutate(cur => (cur.exists && cur.theme === ref ? { theme: cur.theme, settings: cur.settings } : null)),

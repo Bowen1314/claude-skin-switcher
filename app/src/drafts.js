@@ -49,6 +49,14 @@
       // "Discard", or after a successful Apply.
       discard: ref => drafts.delete(ref),
 
+      // The skin now lives under another ref: its draft follows (and wins).
+      move: (from, to) => {
+        if (drafts.has(from)) {
+          drafts.set(to, drafts.get(from))
+          drafts.delete(from)
+        }
+      },
+
       // The primary button: 'apply' | 'applied' | 'apply-changes'.
       button: (ref, activeRef) => (ref !== activeRef ? 'apply' : drafts.has(ref) ? 'apply-changes' : 'applied'),
     }

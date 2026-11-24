@@ -80,6 +80,13 @@ const makeService = async () => {
     clientId: shot?.clientId ?? constants.GOOGLE_CLIENT_ID,
     clientSecret: constants.GOOGLE_CLIENT_SECRET,
     localOwner: constants.LOCAL_OWNER,
+    // The one-time cleanup of library skins left next to their upload, per public name.
+    mergeMarks: {
+      has: async h => (prefs.get().mergedUploads ?? []).includes(h),
+      add: async h => {
+        await prefs.set({ mergedUploads: [...(prefs.get().mergedUploads ?? []), h] })
+      },
+    },
     // The sign-in page opens in the person's own browser; screenshot runs never open anything.
     openExternal: url => (shot ? Promise.resolve() : shell.openExternal(url)),
     // After the browser hands back the sign-in, put the app in front again.

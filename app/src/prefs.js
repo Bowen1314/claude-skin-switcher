@@ -10,12 +10,17 @@ const { writeFileAtomic } = require('./atomic')
 const LANGUAGES = new Set(['system', 'en', 'zh'])
 const DEFAULTS = Object.freeze({ language: 'system', autoUpdate: true })
 
+// Public names the one-time duplicate cleanup ran for (service.js mergeUploaded).
+const HANDLE = /^[a-z0-9][a-z0-9-]{0,38}$/
+
 const normalizePrefs = raw => {
   const p = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const merged = Array.isArray(p.mergedUploads) ? [...new Set(p.mergedUploads.filter(h => typeof h === 'string' && HANDLE.test(h)))].slice(0, 20) : []
 
   return {
     language: LANGUAGES.has(p.language) ? p.language : DEFAULTS.language,
     autoUpdate: typeof p.autoUpdate === 'boolean' ? p.autoUpdate : DEFAULTS.autoUpdate,
+    ...(merged.length > 0 ? { mergedUploads: merged } : {}),
   }
 }
 
