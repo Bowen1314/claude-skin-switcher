@@ -14,7 +14,11 @@
     <div class="drag-strip" aria-hidden="true"></div>
     <div class="app">
       <aside class="sidebar">
-        <div class="brand"><img class="brand-icon" src="assets/icon-64.png" alt="" draggable="false" /><span id="app-name"></span></div>
+        <div class="brand"><img class="brand-icon" src="assets/icon-64.png" alt="" draggable="false" /><span id="app-name"></span>
+          <button id="update-badge" class="icon-btn update-badge" type="button" aria-haspopup="dialog" aria-expanded="false" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v7M5 6.5l3 3 3-3M3 10.5v1.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5v-1.5" /></svg>
+          </button>
+        </div>
         <div id="library-label" class="side-label"></div>
         <div id="lib-list" class="theme-list" role="listbox"></div>
         <!-- pinned to the bottom; the library list above shrinks and scrolls -->
@@ -305,6 +309,7 @@
     <script src="../src/drafts.js"></script>
     <script src="../src/color.js"></script>
     <script src="../src/backdrop.js"></script>
+    <script src="../src/update-badge.js"></script>
     <script src="picker.js"></script>
     <script src="dropdown.js"></script>
     <script src="renderer.js"></script>

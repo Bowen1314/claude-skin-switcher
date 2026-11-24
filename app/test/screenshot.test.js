@@ -36,6 +36,9 @@ test('screenshot options are validated', () => {
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'available' }).update, 'available')
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'downloading' }).update, 'downloading')
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: 'installing' }).update, null)
+  for (const kind of ['popup', 'popup-downloading', 'popup-move']) {
+    assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_UPDATE: kind }).update, kind)
+  }
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_DELETE: 'menu' }).del, 'menu')
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_DELETE: 'yes' }).del, null)
   assert.equal(screenshotOptions({ TS_SCREENSHOT: 'a.png', TS_OPEN_PICKER: 'accent' }).picker, 'accent')

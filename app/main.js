@@ -151,7 +151,7 @@ const registerIpc = () => {
     strings: stringsFor(lang),
     library: await service.library(),
     selection: await service.selection(),
-    shot: shot ? { view: shot.view, select: shot.select, draft: shot.draft, tab: shot.tab, picker: shot.picker, del: shot.del, dropdown: shot.dropdown } : null,
+    shot: shot ? { view: shot.view, select: shot.select, draft: shot.draft, tab: shot.tab, picker: shot.picker, del: shot.del, dropdown: shot.dropdown, updatePop: shot.update?.startsWith('popup') === true } : null,
     status: await currentStatus(),
   }))
 
@@ -316,12 +316,15 @@ const makeUpdater = () => {
   return u
 }
 
-// Screenshot runs (TS_UPDATE=available|downloading): the About row in that state.
+// Screenshot runs (TS_UPDATE): the About row and the sidebar icon in that state;
+// popup-* also opens the icon's popover (the renderer does that).
 const fakeUpdate = kind => {
   const [a, b, c] = app.getVersion().split('.').map(Number)
   const latest = `${a}.${b}.${c + 1}`
+  const status = kind.endsWith('downloading') ? 'downloading' : 'available'
+  const error = kind === 'popup-move' ? { during: 'update', code: 'move', message: 'dmg', reason: 'dmg' } : null
 
-  return { status: kind, current: app.getVersion(), latest, notesUrl: null, progress: kind === 'downloading' ? 0.42 : null, error: null }
+  return { status, current: app.getVersion(), latest, notesUrl: null, progress: status === 'downloading' ? 0.42 : null, error }
 }
 
 const capture = async () => {

@@ -1719,10 +1719,161 @@ const renderUpdate = () => {
   $('update-hint').textContent = hint
 }
 
+// ---------- sidebar update icon and its popover ----------
+
+let badgeDismissed = null // version passed over with "Not now" (this session only)
+let updatePop = null // { root, parts, outside, place }
+
+const renderBadge = () => {
+  const show = window.UpdateBadge.showBadge(update, badgeDismissed)
+  const b = $('update-badge')
+
+  b.hidden = !show
+  if (show) {
+    const label = fill(S.updateAvailable, { v: update.latest })
+
+    b.title = label
+    b.setAttribute('aria-label', label)
+  } else {
+    closeUpdatePop()
+  }
+}
+
+const renderUpdatePop = () => {
+  if (updatePop === null) {
+    return
+  }
+  const { root, parts } = updatePop
+  const v = window.UpdateBadge.popoverView(update)
+  const working = v.phase !== 'available'
+  const error = updateErrorText(v.error)
+  const hint = platform === 'darwin' ? S.updateKeychainHint : platform === 'win32' ? S.updateWinHint : ''
+  const hadFocus = root.contains(document.activeElement)
+
+  parts.title.textContent = fill(S.updateAvailable, { v: update.latest })
+  parts.versions.textContent = `v${update.current ?? appVersion} → v${update.latest}`
+  parts.status.hidden = !working
+  parts.status.textContent = v.phase === 'downloading' ? fill(S.updateDownloading, { v: update.latest, pct: v.progress }) : v.phase === 'installing' ? fill(S.updateInstalling, { v: update.latest }) : ''
+  parts.bar.hidden = v.phase !== 'downloading'
+  parts.fill.style.width = `${v.progress ?? 0}%`
+  parts.error.hidden = error === ''
+  parts.error.textContent = error
+  parts.hint.hidden = hint === '' || working
+  parts.hint.textContent = hint
+  parts.go.textContent = S.updateNow
+  parts.go.hidden = working
+  parts.go.disabled = !v.canUpdate
+  parts.later.textContent = S.notNow
+  parts.later.hidden = working
+  parts.cancel.textContent = S.cancel
+  parts.cancel.hidden = v.phase !== 'downloading'
+  parts.notes.textContent = S.releaseNotes
+  parts.notes.hidden = working
+  // A button that just went away (Update -> downloading) leaves focus in the popover.
+  if (hadFocus && !root.contains(document.activeElement)) {
+    root.focus({ preventScroll: true })
+  }
+  updatePop.place()
+}
+
+const closeUpdatePop = (refocus = false) => {
+  const p = updatePop
+
+  if (p === null) {
+    return
+  }
+  updatePop = null
+  document.removeEventListener('pointerdown', p.outside, true)
+  window.removeEventListener('resize', p.place)
+  p.root.remove()
+  $('update-badge').setAttribute('aria-expanded', 'false')
+  if (refocus && !$('update-badge').hidden) {
+    $('update-badge').focus()
+  }
+}
+
+const openUpdatePop = () => {
+  closeUpdatePop()
+  window.Dropdown.close(false)
+  window.ColorPicker.close()
+  closeRowMenu()
+  const badge = $('update-badge')
+  const root = el('div', 'popover update-pop')
+  const parts = {
+    title: el('h2', null),
+    versions: el('span', 'muted-text'),
+    status: el('span', null),
+    bar: el('div', 'progress'),
+    fill: el('span', null),
+    error: el('span', 'error-text'),
+    hint: el('span', 'muted-text small-text'),
+    go: button('primary small', '', () => startUpdate()),
+    later: button('ghost flat', '', () => {
+      badgeDismissed = update.latest
+      closeUpdatePop()
+      renderBadge()
+      $('nav-settings').focus()
+    }),
+    cancel: button('tiny-link', '', () => api.cancelUpdate().then(setUpdate, () => {})),
+    notes: button('tiny-link', '', () => api.openReleaseNotes()),
+  }
+
+  root.id = 'update-pop'
+  root.tabIndex = -1
+  root.setAttribute('role', 'dialog')
+  root.setAttribute('aria-labelledby', 'update-pop-title')
+  parts.title.id = 'update-pop-title'
+  parts.status.setAttribute('role', 'status')
+  parts.error.setAttribute('role', 'alert')
+  parts.bar.append(parts.fill)
+  const actions = el('div', 'update-pop-actions')
+
+  actions.append(parts.go, parts.later, parts.cancel, parts.notes)
+  root.append(parts.title, parts.versions, parts.status, parts.bar, parts.error, parts.hint, actions)
+  root.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      closeUpdatePop(true)
+    }
+  })
+  // Non-modal: tabbing out of it, or clicking anywhere else, just closes it.
+  root.addEventListener('focusout', e => {
+    if (e.relatedTarget instanceof Node && !root.contains(e.relatedTarget) && e.relatedTarget !== badge) {
+      closeUpdatePop()
+    }
+  })
+  const outside = e => {
+    if (!root.contains(e.target) && !badge.contains(e.target)) {
+      closeUpdatePop()
+    }
+  }
+  // Under the icon, left edges aligned; kept inside the window.
+  const place = () => {
+    const a = badge.getBoundingClientRect()
+    const left = Math.max(8, Math.min(a.left, window.innerWidth - root.offsetWidth - 8))
+    const top = Math.max(8, Math.min(a.bottom + 6, window.innerHeight - root.offsetHeight - 8))
+
+    root.style.left = `${Math.round(left)}px`
+    root.style.top = `${Math.round(top)}px`
+  }
+
+  updatePop = { root, parts, outside, place }
+  document.body.append(root)
+  document.addEventListener('pointerdown', outside, true)
+  window.addEventListener('resize', place)
+  badge.setAttribute('aria-expanded', 'true')
+  badge.setAttribute('aria-controls', 'update-pop')
+  renderUpdatePop()
+  ;(parts.go.hidden || parts.go.disabled ? root : parts.go).focus({ preventScroll: true })
+}
+
 const setUpdate = next => {
   update = next ?? update
   renderUpdate()
   renderStatus()
+  renderBadge()
+  renderUpdatePop()
 }
 
 const checkUpdate = async () => {
@@ -2029,6 +2180,8 @@ const applyLanguage = r => {
   closeRowMenu()
   hideAsk()
   texts()
+  renderBadge()
+  renderUpdatePop()
   labelDropdowns()
   renderLibraryList()
   renderStatus()
@@ -2058,6 +2211,13 @@ const wire = () => {
   $('update-go').addEventListener('click', startUpdate)
   $('update-cancel').addEventListener('click', () => api.cancelUpdate().then(setUpdate, () => {}))
   $('update-notes').addEventListener('click', () => api.openReleaseNotes())
+  $('update-badge').addEventListener('click', () => (updatePop === null ? openUpdatePop() : closeUpdatePop()))
+  $('update-badge').addEventListener('keydown', e => {
+    if (e.key === 'Escape' && updatePop !== null) {
+      e.preventDefault()
+      closeUpdatePop(true)
+    }
+  })
   api.onUpdate(setUpdate)
   $('lib-list').addEventListener('keydown', onListKey)
   $('nav-gallery').addEventListener('click', showGallery)
@@ -2176,6 +2336,7 @@ const start = async () => {
   await Promise.all(library.map(thumbFor))
   renderLibraryList()
   renderStatus()
+  renderBadge()
 
   const shotView = init.shot?.view ?? 'library'
   const firstRef = init.shot?.select && init.shot.view !== 'detail' ? init.shot.select : (selection.theme ?? library.find(e => e.ok)?.ref ?? 'default')
@@ -2229,6 +2390,10 @@ const start = async () => {
   }
   if (init.shot?.dropdown) {
     window.Dropdown.open($(init.shot.dropdown))
+  }
+  // TS_UPDATE=popup…: the sidebar update icon's popover.
+  if (init.shot?.updatePop && !$('update-badge').hidden) {
+    openUpdatePop()
   }
   // TS_TAB: a tab in whichever skin view is open (library or gallery detail).
   if (init.shot?.tab && view === 'skin' && !$('tabs').hidden) {

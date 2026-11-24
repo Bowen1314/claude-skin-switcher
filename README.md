@@ -19,7 +19,7 @@ English | [中文](README_CN.md)
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/tune-dark.png" width="900" alt="Tuning the Graphite Circuit skin: sliders on the right, live preview on the left">
+  <img src="assets/social-preview.png" width="900" alt="Claude Skin Switcher: skins for the Claude desktop app">
 </p>
 
 ## Before you start
@@ -53,7 +53,7 @@ English | [中文](README_CN.md)
 - **Save as new.** Save the current tuning as a separate skin and upload it, no code required.
 - **Safe by design.** A skin is data: a JSON file and an SVG drawing. Scripts, external links and embedded content are refused by the gallery on upload, by the app on download, by the plugin, and by Claude itself. [Security design](docs/security.md)
 - **Native feel.** No title bar, light and dark themes, English and Chinese (follows the system or set in **Settings**), and a Settings page with the Claude connection status and one-click plugin install.
-- **In-app updates.** The app checks GitHub Releases for a new version and installs it when you click **Update** in **Settings → About**. Every download is checked against the release's SHA-512 checksum first.
+- **In-app updates.** The app checks GitHub Releases for new versions. When one is available, an update icon appears at the top of the sidebar; clicking it shows the version, the release notes and **Update** / **Not now**. Nothing is downloaded until you click **Update**, and every download is checked against the release's SHA-512 checksum before it is installed.
 
 ## Screenshots
 
@@ -111,7 +111,7 @@ The builds are not code-signed yet:
 2. Start a new Claude session. Sessions that were already open don't load new plugins.
 3. Pick a skin and click **Apply**. Open sessions follow within about 2 seconds, and **Settings** shows **Connected**.
 
-Later versions update from **Settings → About**: click **Update** when a new version is listed. On macOS this works when the app is in Applications (or another folder you can write to), not when it runs from the disk image.
+Later versions update in the app: when a new version is available, an update icon appears at the top of the sidebar. Click it, then **Update**; **Not now** hides the icon until the next launch. **Settings → About** also checks for and installs updates. Downloads are checked against the release's SHA-512 checksum. On macOS, in-place updates require the app to be in Applications (or another folder you can write to); they do not work while it runs from the disk image. Versions before 0.2.5 show updates only in **Settings → About**.
 
 ## Make and share a skin
 

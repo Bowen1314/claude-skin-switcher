@@ -151,6 +151,54 @@ button {
   height: 20px;
 }
 
+#app-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* new version known: an accent icon at the end of the brand row */
+.icon-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--ease);
+}
+
+.icon-btn[hidden] {
+  display: none;
+}
+
+.icon-btn:hover,
+.icon-btn[aria-expanded='true'] {
+  background: var(--hover);
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.update-badge {
+  color: var(--accent);
+}
+
 .side-label {
   margin: 16px 0 4px;
   padding: 0 8px;
@@ -1818,6 +1866,40 @@ summary,
   background: var(--pop-bg);
   box-shadow: var(--shadow-pop);
   -webkit-app-region: no-drag;
+}
+
+/* update popover, under the sidebar update icon (non-modal) */
+.update-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 280px;
+  padding: 12px;
+  font-size: 12px;
+  user-select: text;
+}
+
+.update-pop h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.update-pop .progress {
+  max-width: none;
+  margin-top: 2px;
+}
+
+.update-pop-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.update-pop-actions .tiny-link:last-child {
+  margin-left: auto;
 }
 
 .picker {
