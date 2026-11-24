@@ -1,0 +1,12 @@
+{
+  "name": "claude-skins",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "migrate": "npx wrangler d1 migrations apply claude-skins --remote",
+    "seed": "node scripts/seed-official.mjs"
+  }
+}

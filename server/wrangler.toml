@@ -1,0 +1,16 @@
+name = "claude-skins"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+preview_urls = false
+
+# Secrets (set with `npx wrangler secret put`): ADMIN_TOKEN, IP_SALT
+
+[[d1_databases]]
+binding = "DB"
+database_name = "claude-skins"
+database_id = "834ec4c9-e95e-42bd-ac75-124caab8e8a3"
+migrations_dir = "migrations"
+
+[observability]
+enabled = false

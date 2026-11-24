@@ -1,0 +1,214 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; base-uri 'none'; form-action 'none'"
+    />
+    <title>Theme Switcher for Claude</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div id="app-name" class="brand"></div>
+        <div id="library-label" class="side-label"></div>
+        <div id="lib-list" class="theme-list" role="listbox"></div>
+        <div id="browse-label" class="side-label"></div>
+        <nav class="nav-list">
+          <button id="nav-gallery" class="row nav-row" type="button" data-view="gallery">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1" /><rect x="9" y="2" width="5" height="5" rx="1" /><rect x="2" y="9" width="5" height="5" rx="1" /><rect x="9" y="9" width="5" height="5" rx="1" /></svg>
+            </span>
+            <span id="nav-gallery-label" class="row-name"></span>
+          </button>
+          <button id="nav-upload" class="row nav-row" type="button" data-view="upload">
+            <span class="nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10" /></svg>
+            </span>
+            <span id="nav-upload-label" class="row-name"></span>
+          </button>
+        </nav>
+
+        <section class="bridge">
+          <div class="bridge-status">
+            <span id="bridge-dot" class="status-dot" aria-hidden="true"></span>
+            <span id="bridge-text" class="bridge-text"></span>
+          </div>
+          <div id="bridge-sub" class="bridge-sub"></div>
+          <div id="bridge-error" class="bridge-error" hidden></div>
+          <button id="install" class="ghost" type="button" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="install-label"></span>
+          </button>
+          <p id="install-ok" class="install-ok" hidden></p>
+          <details id="install-details" class="install-details" hidden>
+            <summary id="install-summary"></summary>
+            <p id="install-text" class="install-text"></p>
+            <pre id="manual-text" class="code" hidden></pre>
+            <button id="manual-copy" class="tiny-link" type="button" hidden></button>
+            <pre id="install-log" class="code log"></pre>
+          </details>
+        </section>
+        <div class="side-links">
+          <button id="repo" class="tiny-link" type="button"></button>
+          <span class="sep" aria-hidden="true">·</span>
+          <span id="footer-text"></span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <!-- one skin: from the library, Claude default, or a gallery detail -->
+        <section id="view-skin" class="view">
+          <button id="back" class="back-link" type="button" hidden></button>
+          <header class="main-head">
+            <div class="head-text">
+              <h1 id="skin-name" class="theme-name"></h1>
+              <p id="skin-desc" class="theme-desc"></p>
+            </div>
+            <div class="head-actions">
+              <span id="confirm" class="confirm" role="status"></span>
+              <div class="segmented" role="radiogroup">
+                <button id="mode-dark" type="button" role="radio" data-mode="dark"></button>
+                <button id="mode-light" type="button" role="radio" data-mode="light"></button>
+              </div>
+              <button id="report" class="ghost head-ghost" type="button" hidden></button>
+              <button id="apply" class="primary" type="button"></button>
+            </div>
+          </header>
+          <div id="ask" class="ask" hidden>
+            <span id="ask-text"></span>
+            <button id="ask-yes" class="ghost danger" type="button"></button>
+            <button id="ask-no" class="tiny-link" type="button"></button>
+          </div>
+          <div id="tabs" class="tabs" role="tablist">
+            <button id="tab-overview" type="button" role="tab" data-tab="overview"></button>
+            <button id="tab-tune" type="button" role="tab" data-tab="tune"></button>
+            <span id="tune-saved" class="tune-saved"></span>
+          </div>
+
+          <div id="skin-body" class="skin-body">
+            <div class="stage-col">
+              <div class="stage">
+                <div id="preview" class="preview">
+                  <img id="scene" class="scene" alt="" hidden />
+                  <div class="mock">
+                    <div class="mock-side glass">
+                      <span class="bar w70"></span>
+                      <span class="bar w50"></span>
+                      <span class="bar w80"></span>
+                      <span class="bar w40"></span>
+                      <span class="bar w60"></span>
+                    </div>
+                    <div class="mock-main glass">
+                      <div class="mock-thread">
+                        <p id="mock-text" class="mock-text"></p>
+                        <div class="mock-tool"><span class="tool-name">Bash</span><span>npm test -- --runInBand</span></div>
+                        <div class="mock-user"><span id="mock-user" class="bubble"></span></div>
+                      </div>
+                      <div id="mock-input" class="mock-input"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div id="fill-row" class="fill-row">
+                <label id="fill-label" for="fill"></label>
+                <input id="fill" type="range" min="0" max="100" step="5" value="40" />
+                <span id="fill-value" class="num"></span>
+              </div>
+              <p id="hint" class="hint"></p>
+            </div>
+
+            <div id="pane-overview" class="pane">
+              <dl id="details" class="details"></dl>
+            </div>
+            <div id="pane-tune" class="pane tune" hidden>
+              <p id="tune-note" class="pane-note"></p>
+              <div id="tune-groups"></div>
+              <div class="tune-foot">
+                <button id="reset" class="ghost" type="button"></button>
+                <button id="save-new" class="ghost" type="button"></button>
+              </div>
+              <form id="new-form" class="new-form" hidden>
+                <label><span id="new-name-label"></span><input id="new-name" type="text" maxlength="40" /></label>
+                <label><span id="new-slug-label"></span><input id="new-slug" type="text" maxlength="40" spellcheck="false" /></label>
+                <p id="new-error" class="error-text" hidden></p>
+                <div class="form-actions">
+                  <button id="new-save" class="primary small" type="submit"></button>
+                  <button id="new-cancel" class="tiny-link" type="button"></button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div id="broken" class="broken" hidden>
+            <p id="broken-text" class="broken-text"></p>
+            <ul id="broken-list" class="error-list"></ul>
+          </div>
+        </section>
+
+        <section id="view-gallery" class="view" hidden>
+          <header class="main-head">
+            <div class="head-text">
+              <h1 id="gallery-title" class="theme-name"></h1>
+              <p id="gallery-sub" class="theme-desc"></p>
+            </div>
+          </header>
+          <div class="toolbar">
+            <input id="search" class="search" type="search" spellcheck="false" />
+            <div class="segmented" role="radiogroup">
+              <button id="sort-new" type="button" role="radio" data-sort="new"></button>
+              <button id="sort-popular" type="button" role="radio" data-sort="popular"></button>
+            </div>
+            <select id="tag" class="select"></select>
+          </div>
+          <div id="grid-wrap" class="grid-wrap">
+            <div id="grid" class="grid"></div>
+            <p id="grid-state" class="grid-state" hidden></p>
+            <div class="grid-more">
+              <button id="grid-retry" class="ghost" type="button" hidden></button>
+              <button id="load-more" class="ghost" type="button" hidden></button>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-upload" class="view" hidden>
+          <header class="main-head">
+            <div class="head-text">
+              <h1 id="upload-title" class="theme-name"></h1>
+              <p id="upload-sub" class="theme-desc"></p>
+            </div>
+          </header>
+          <div class="upload-scroll">
+            <dl class="details upload-table">
+              <dt id="up-account-key"></dt>
+              <dd id="up-account" class="stack"></dd>
+              <dt id="up-source-key"></dt>
+              <dd class="stack">
+                <div class="inline">
+                  <button id="up-folder" class="ghost flat" type="button"></button>
+                  <select id="up-library" class="select"></select>
+                </div>
+                <span id="up-source" class="muted-text"></span>
+              </dd>
+              <dt id="up-checks-key"></dt>
+              <dd class="stack">
+                <ul id="up-checks" class="error-list"></ul>
+                <div class="inline">
+                  <button id="up-send" class="primary small" type="button"></button>
+                  <span id="up-result" class="muted-text" role="status"></span>
+                </div>
+                <span id="up-rules" class="muted-text small-text"></span>
+              </dd>
+              <dt id="up-mine-key" hidden></dt>
+              <dd id="up-mine" class="stack" hidden></dd>
+            </dl>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="../src/skin-render.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

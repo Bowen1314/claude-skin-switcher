@@ -1,0 +1,10 @@
+{
+  "name": "theme-switcher",
+  "version": "0.2.0",
+  "description": "Bridge for the Theme Switcher app: draws the skin picked in the app (colors, animated backdrop, message style) and its settings.",
+  "author": {
+    "name": "Soso Technologies LLC"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "slug": "fixture-skin",
+  "name": "Fixture Skin",
+  "description": "Seed script fixture.",
+  "author": "official",
+  "version": 1,
+  "tags": ["test"],
+  "colors": {
+    "roles": { "accent": "#35b8c9" },
+    "dark": { "anchors": { "surface-0": "#0e1013", "surface-1": "#14171b", "text-primary": "#e6e9ee" } }
+  },
+  "backdrop": { "scene": true, "glass": { "blur": 8, "opacity": 0.6 } }
+}

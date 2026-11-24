@@ -1,0 +1,14 @@
+{
+  "name": "claude-theme-switcher",
+  "description": "Theme Switcher for Claude: Firefly Meadow and Graphite Circuit looks for the Claude desktop app.",
+  "owner": {
+    "name": "Soso Technologies LLC"
+  },
+  "plugins": [
+    {
+      "name": "theme-switcher",
+      "source": "./plugin",
+      "description": "Applies the look picked in the Claude Theme Switcher app."
+    }
+  ]
+}

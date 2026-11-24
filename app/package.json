@@ -1,0 +1,91 @@
+{
+  "name": "claude-theme-switcher",
+  "productName": "Theme Switcher for Claude",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Pick a look for the Claude desktop app; a small bridge plugin applies it.",
+  "author": "Soso Technologies LLC",
+  "license": "MIT",
+  "homepage": "https://github.com/Bowen1314/claude-theme-switcher",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/**/*.test.js\"",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.sosotech.claude-theme-switcher",
+    "productName": "Theme Switcher for Claude",
+    "copyright": "Copyright © 2026 Soso Technologies LLC",
+    "artifactName": "theme-switcher-for-claude-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "!renderer/previews{,/**}",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../.claude-plugin",
+        "to": "marketplace/.claude-plugin"
+      },
+      {
+        "from": "../plugin",
+        "to": "marketplace/plugin",
+        "filter": [
+          "**/*",
+          "!tests{,/**}"
+        ]
+      },
+      {
+        "from": "../shared/skin-validate.js",
+        "to": "shared/skin-validate.mjs"
+      },
+      {
+        "from": "../plugin/hooks/make-colors.js",
+        "to": "shared/make-colors.mjs"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "Theme Switcher for Claude"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false
+    }
+  }
+}

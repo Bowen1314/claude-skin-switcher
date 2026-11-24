@@ -1,0 +1,102 @@
+{
+  "format": 1,
+  "slug": "graphite-circuit",
+  "name": "Graphite Circuit",
+  "description": "Graphite and one signal cyan over a faint circuit grid; more nodes light up as the context fills.",
+  "author": "official",
+  "version": 1,
+  "tags": [
+    "animated",
+    "minimal",
+    "tech"
+  ],
+  "colors": {
+    "roles": {
+      "accent": "#35b8c9",
+      "danger": "#e0524a",
+      "success": "#4fb37a",
+      "warning": "#d9a033",
+      "pro": "#8b7cf0"
+    },
+    "light": {
+      "anchors": {
+        "surface-0": "#eceef1",
+        "surface-1": "#f3f4f6",
+        "surface-2": "#fafbfc",
+        "surface-3": "#fafbfc",
+        "text-primary": "#15181d",
+        "text-secondary": "#3b414b",
+        "text-muted": "#555c67"
+      }
+    },
+    "dark": {
+      "anchors": {
+        "surface-0": "#0e1013",
+        "surface-1": "#14171b",
+        "surface-2": "#1a1d22",
+        "surface-3": "#1f2328",
+        "text-primary": "#e6e9ee",
+        "text-secondary": "#b4bac4",
+        "text-muted": "#8a919c"
+      }
+    }
+  },
+  "backdrop": {
+    "scene": true,
+    "glass": {
+      "blur": 10,
+      "opacity": 0.72
+    }
+  },
+  "style": {
+    "Heading": {
+      "fontFamily": [
+        "mono"
+      ],
+      "fontWeight": "semibold",
+      "letterSpacing": 0.4
+    },
+    "UserMessage": {
+      "backgroundColor": "surface-1",
+      "borderColor": "border-strong",
+      "borderWidth": 1,
+      "radius": 3,
+      "shadow": "none",
+      "paddingX": 14,
+      "paddingY": 10
+    },
+    "ToolUse": {
+      "fontFamily": [
+        "mono"
+      ],
+      "backgroundColor": "surface-1",
+      "borderColor": "border",
+      "borderWidth": 1,
+      "radius": 2,
+      "paddingX": 8
+    }
+  },
+  "variables": [
+    {
+      "key": "signal",
+      "label": "Signal color",
+      "type": "color",
+      "default": "#3ec6d8"
+    },
+    {
+      "key": "grid",
+      "label": "Grid strength",
+      "type": "range",
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "default": 1
+    },
+    {
+      "key": "circuit",
+      "label": "Circuit traces",
+      "type": "toggle",
+      "default": true
+    }
+  ]
+}

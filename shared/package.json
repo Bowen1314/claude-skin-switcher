@@ -1,0 +1,7 @@
+{
+  "name": "@claude-theme-switcher/shared",
+  "private": true,
+  "type": "module",
+  "exports": { "./skin-validate.js": "./skin-validate.js" },
+  "scripts": { "test": "node --test test/*.test.js" }
+}
