@@ -1,7 +1,7 @@
 {
   "name": "theme-switcher",
-  "version": "0.2.0",
-  "description": "Bridge for the Theme Switcher app: draws the skin picked in the app (colors, animated backdrop, message style) and its settings.",
+  "version": "0.2.1",
+  "description": "The bridge for Claude Skin Switcher: draws the skin you pick in the app.",
   "author": {
     "name": "Soso Technologies LLC"
   },

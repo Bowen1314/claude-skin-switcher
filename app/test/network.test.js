@@ -6,7 +6,7 @@ const path = require('node:path')
 const test = require('node:test')
 
 const { createGallery, listItem } = require('../src/gallery')
-const { pollForToken, requestDeviceCode, GRANT } = require('../src/github')
+const { exchangeCode, expiryOf, isFresh, refreshIdToken, startLoopback } = require('../src/google')
 const { request } = require('../src/http')
 const { createTokenStore } = require('../src/token-store')
 const { bakeTuning, freeSlug, importFolder, prepareUpload } = require('../src/upload')
@@ -76,7 +76,8 @@ test('gallery writes: download, report, upload, me, delete; read-only mode refus
     'POST /api/skins/alice/tiny/download': () => ({ json: { ok: true, counted: true, downloads: 6 } }),
     'POST /api/skins/alice/tiny/report': () => ({ json: { ok: true, counted: true, hidden: false } }),
     'POST /api/skins': (req, body) => (req.headers.authorization === 'Bearer test-token' ? { status: 201, json: { ref: 'alice.tiny', version: 1, echo: JSON.parse(body) } } : { status: 401, json: { error: 'bad token' } }),
-    'GET /api/me': () => ({ json: { login: 'Alice', skins: [item({ hidden: true, reports: 3 })] } }),
+    'GET /api/me': () => ({ json: { handle: 'alice', skins: [item({ hidden: true, reports: 3 })] } }),
+    'POST /api/me/handle': (req, body) => (JSON.parse(body).handle === 'taken' ? { status: 409, json: { error: 'taken' } } : { json: { handle: JSON.parse(body).handle } }),
     'DELETE /api/skins/alice/tiny': () => ({ json: { ok: true } }),
   })
   const d = await deps()
@@ -90,7 +91,11 @@ test('gallery writes: download, report, upload, me, delete; read-only mode refus
   await assert.rejects(g.upload('', {}), /Not signed in/)
   const me = await g.me('test-token')
 
-  assert.equal(me.login, 'alice')
+  assert.equal(me.handle, 'alice')
+  assert.deepEqual(await g.claimHandle('test-token', 'new-name'), { handle: 'new-name' })
+  assert.equal(JSON.parse(mock.calls.at(-1).body).handle, 'new-name')
+  await assert.rejects(g.claimHandle('test-token', 'taken'), e => e.status === 409 && /taken/.test(e.message))
+  await assert.rejects(g.claimHandle('test-token', 'Bad Name'), e => e.code === 'bad-handle')
   assert.equal(me.skins[0].hidden, true)
   assert.equal(me.skins[0].reports, 3)
   assert.deepEqual(await g.remove('test-token', 'alice', 'tiny'), { ok: true })
@@ -115,55 +120,89 @@ test('http: timeouts and size caps', async t => {
   await assert.rejects(request('http://127.0.0.1:1/x', { timeoutMs: 1000 }), e => e.code === 'network')
 })
 
-test('device flow: code, pending, slow_down uses the returned interval, then a token', async t => {
-  const answers = [{ error: 'authorization_pending' }, { error: 'slow_down', interval: 10 }, { error: 'authorization_pending' }, { access_token: 'gho_fake', token_type: 'bearer' }]
-  const mock = await startMock(t, {
-    'POST /login/device/code': (_r, body) => ({ json: { device_code: 'dev123', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', expires_in: 900, interval: 5, echo: body } }),
-    'POST /login/oauth/access_token': () => ({ status: 200, json: answers.shift() }),
-  })
+// A fake id token: header.payload.signature, payload { exp } (seconds).
+const idTok = (expMs, tag = 'x') => `h.${Buffer.from(JSON.stringify({ exp: Math.floor(expMs / 1000), sub: tag })).toString('base64url')}.s`
 
-  await assert.rejects(requestDeviceCode({ githubUrl: mock.url, clientId: '' }), e => e.code === 'not-configured')
-  assert.equal(mock.calls.length, 0)
-  const code = await requestDeviceCode({ githubUrl: mock.url, clientId: 'Iv1.test' })
+test('loopback sign-in: openid only, PKCE S256, a wrong state is refused, the right one is taken once', async () => {
+  let opened = null
+  const flow = await startLoopback({ authUrl: 'https://accounts.example/o/oauth2/v2/auth', clientId: 'cid.apps', openExternal: async url => { opened = new URL(url) } })
+  const q = opened.searchParams
 
-  assert.deepEqual(code, { deviceCode: 'dev123', userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', interval: 5, expiresIn: 900 })
-  assert.equal(new URLSearchParams(mock.calls[0].body).get('client_id'), 'Iv1.test')
-  assert.equal(new URLSearchParams(mock.calls[0].body).get('scope'), null)
-  assert.equal(mock.calls[0].headers.accept, 'application/json')
+  assert.equal(opened.origin + opened.pathname, 'https://accounts.example/o/oauth2/v2/auth')
+  assert.deepEqual(
+    [q.get('client_id'), q.get('response_type'), q.get('scope'), q.get('code_challenge_method'), q.get('access_type'), q.get('prompt')],
+    ['cid.apps', 'code', 'openid', 'S256', 'offline', 'consent'],
+  )
+  assert.match(q.get('redirect_uri'), /^http:\/\/127\.0\.0\.1:\d+$/)
+  assert.equal(q.get('redirect_uri'), flow.redirectUri)
+  const crypto = require('node:crypto')
 
-  const waits = []
-  let clock = 0
-  const r = await pollForToken({ githubUrl: mock.url, clientId: 'Iv1.test', deviceCode: 'dev123', interval: 5, expiresIn: 900, sleep: async ms => { waits.push(ms); clock += ms }, now: () => clock })
+  assert.equal(q.get('code_challenge'), crypto.createHash('sha256').update(flow.verifier).digest('base64url'))
+  // The browser comes back: first with a forged state, then a stray path, then the real redirect.
+  const forged = await fetch(`${flow.redirectUri}/?code=evil&state=nope`)
 
-  assert.deepEqual(r, { token: 'gho_fake' })
-  assert.deepEqual(waits, [5000, 5000, 10000, 10000])
-  const poll = new URLSearchParams(mock.calls[1].body)
+  assert.equal(forged.status, 400)
+  assert.equal((await fetch(`${flow.redirectUri}/favicon.ico`)).status, 404)
+  const ok = await fetch(`${flow.redirectUri}/?code=good-code&state=${q.get('state')}`)
 
-  assert.equal(poll.get('grant_type'), GRANT)
-  assert.equal(poll.get('device_code'), 'dev123')
+  assert.equal(ok.status, 200)
+  assert.match(await ok.text(), /close this tab/)
+  assert.deepEqual(await flow.result, { code: 'good-code' })
+  await assert.rejects(fetch(`${flow.redirectUri}/?code=again&state=${q.get('state')}`), 'the listener is gone after one redirect')
 })
 
-test('device flow: expiry, denial, cancel, and errors in a 4xx body', async t => {
-  let answer = { error: 'authorization_pending' }
+test('loopback sign-in: not configured, denied, cancelled, timed out', async () => {
+  await assert.rejects(startLoopback({ authUrl: 'https://a.example', clientId: '', openExternal: async () => {} }), e => e.code === 'not-configured')
+  let state = null
+  const denied = await startLoopback({ authUrl: 'https://a.example', clientId: 'c', openExternal: async url => { state = new URL(url).searchParams.get('state') } })
+
+  await fetch(`${denied.redirectUri}/?error=access_denied&state=${state}`)
+  assert.deepEqual(await denied.result, { error: 'access_denied' })
+  const cancelled = await startLoopback({ authUrl: 'https://a.example', clientId: 'c', openExternal: async () => {} })
+
+  cancelled.cancel()
+  assert.deepEqual(await cancelled.result, { error: 'cancelled' })
+  const slow = await startLoopback({ authUrl: 'https://a.example', clientId: 'c', openExternal: async () => {}, timeoutMs: 50 })
+
+  assert.deepEqual(await slow.result, { error: 'timeout' })
+})
+
+test('token endpoint: code exchange sends the PKCE verifier; refresh; invalid_grant', async t => {
+  const now = 1_800_000_000_000
+  let revoked = false
   const mock = await startMock(t, {
-    'POST /login/oauth/access_token': () => ({ status: 400, json: answer }),
+    'POST /token': (_req, body) => {
+      const f = new URLSearchParams(body)
+
+      if (f.get('grant_type') === 'authorization_code') {
+        return f.get('code_verifier') === 'the-verifier' && f.get('client_secret') === 'sec' && f.get('redirect_uri') === 'http://127.0.0.1:5555'
+          ? { json: { refresh_token: 'r1', id_token: idTok(now + 3600_000, 'a'), expires_in: 3599 } }
+          : { status: 400, json: { error: 'invalid_request' } }
+      }
+
+      return revoked ? { status: 400, json: { error: 'invalid_grant', error_description: 'Token has been expired or revoked.' } } : { json: { id_token: idTok(now + 3600_000, 'b'), expires_in: 3599 } }
+    },
   })
-  let clock = 0
-  const base = { githubUrl: mock.url, clientId: 'Iv1.test', deviceCode: 'd', interval: 5, sleep: async ms => { clock += ms }, now: () => clock }
+  const base = { tokenUrl: `${mock.url}/token`, clientId: 'cid', clientSecret: 'sec', now: () => now }
+  const first = await exchangeCode({ ...base, code: 'c', verifier: 'the-verifier', redirectUri: 'http://127.0.0.1:5555' })
 
-  assert.deepEqual(await pollForToken({ ...base, expiresIn: 12 }), { error: 'expired_token' })
-  answer = { error: 'access_denied' }
-  assert.deepEqual(await pollForToken({ ...base, expiresIn: 900 }), { error: 'access_denied' })
-  answer = { error: 'authorization_pending' }
-  let cancelled = false
-  const p = pollForToken({ ...base, expiresIn: 900, sleep: async () => { cancelled = true }, isCancelled: () => cancelled })
+  assert.equal(first.refreshToken, 'r1')
+  assert.equal(first.expiresAt, now + 3600_000 - ((now + 3600_000) % 1000))
+  await assert.rejects(exchangeCode({ ...base, code: 'c', verifier: 'wrong', redirectUri: 'http://127.0.0.1:5555' }), e => e.code === 'invalid_request')
+  const fresh = await refreshIdToken({ ...base, refreshToken: 'r1' })
 
-  assert.deepEqual(await p, { error: 'cancelled' })
+  assert.equal(JSON.parse(Buffer.from(fresh.idToken.split('.')[1], 'base64url')).sub, 'b')
+  assert.equal(new URLSearchParams(mock.calls.at(-1).body).get('grant_type'), 'refresh_token')
+  assert.equal(isFresh(fresh, now), true)
+  assert.equal(isFresh(fresh, fresh.expiresAt - 4 * 60_000), false, 'refreshed 5 minutes before exp')
+  assert.equal(expiryOf('garbage'), null)
+  revoked = true
+  await assert.rejects(refreshIdToken({ ...base, refreshToken: 'r1' }), e => e.code === 'invalid_grant')
 })
 
 test('token store: lazy, encrypted, cleared on sign-out', async t => {
   const dir = tempDir(t)
-  const file = path.join(dir, 'auth', 'github.bin')
+  const file = path.join(dir, 'auth', 'google-refresh-token.bin')
   let touched = 0
   const fake = {
     isEncryptionAvailable: () => true,

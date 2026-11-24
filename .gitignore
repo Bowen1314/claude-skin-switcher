@@ -5,3 +5,4 @@ out/
 *.log
 .claude-plugin/types/
 plugin/.claude-plugin/types/
+app/src/google-secret.json

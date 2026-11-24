@@ -5,10 +5,14 @@
 
 const api = window.switcher
 const R = window.SkinRender
+// Unapplied tuning per skin; selection.settings holds what was applied.
+const drafts = window.Drafts.createDrafts(R.sparseSettings)
 const $ = id => document.getElementById(id)
 
 const POLL_MS = 5000
 const CONFIRM_MS = 3000
+// The preview always draws the scene at this context fill (a representative middle).
+const PREVIEW_FILL_PCT = 40
 const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
 
 // Claude's own look for the "Claude default" row (approximate).
@@ -26,7 +30,7 @@ const DEFAULT_SKIN = {
 let S = {}
 let library = [] // entries from main
 let selection = { theme: null, settings: {} }
-let view = 'skin' // skin | gallery | upload
+let view = 'skin' // skin | gallery | upload | settings
 let subject = null // what the skin view shows
 let tab = 'overview'
 let mode = systemDark.matches ? 'dark' : 'light'
@@ -34,12 +38,13 @@ let modeChosen = false
 let status = { state: 'checking' }
 let busy = false
 let confirmTimer = null
-let fillPct = 40
 let isShot = false
+let appVersion = ''
 const thumbs = new Map() // ref -> blob url
 const openGroups = new Set(['backdrop', 'vars'])
 
 const fill = (text, vars) => text.replace(/\{(\w+)\}/g, (_, k) => (vars[k] === undefined ? `{${k}}` : String(vars[k])))
+const downloadsText = n => fill(n === 1 ? S.downloadsOne : S.downloadsN, { n })
 const cleanError = error => String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
 const el = (tag, className, text) => {
   const node = document.createElement(tag)
@@ -187,9 +192,12 @@ const buildRow = ({ ref, entry }) => {
     text.append(el('span', 'row-sub warn', S.brokenRow))
   }
   const badge = el('span', 'badge', S.active)
+  const dot = el('span', 'draft-dot')
 
   badge.hidden = true
-  row.append(thumb, text, badge)
+  dot.hidden = true
+  dot.title = S.draftDot
+  row.append(thumb, text, dot, badge)
   row.addEventListener('click', () => showLibrary(ref))
 
   return row
@@ -209,6 +217,7 @@ const renderRows = () => {
     row.setAttribute('aria-selected', on ? 'true' : 'false')
     row.tabIndex = on ? 0 : -1
     row.querySelector('.badge').hidden = row.dataset.ref !== selection.theme
+    row.querySelector('.draft-dot').hidden = !drafts.has(row.dataset.ref)
   }
   for (const row of document.querySelectorAll('.nav-row')) {
     const on = row.dataset.view === view || (row.dataset.view === 'gallery' && view === 'skin' && subject?.kind === 'gallery')
@@ -241,7 +250,7 @@ const statusText = s =>
 const renderStatus = () => {
   $('bridge-dot').dataset.state = status.state
   $('bridge-text').textContent = statusText(status)
-  $('bridge-sub').textContent = [status.version ? `v${status.version}` : null, status.platform].filter(Boolean).join(' · ')
+  $('bridge-sub').textContent = [status.version ? `v${status.version}` : null, status.platform].filter(Boolean).join(' · ') || S.pluginUnknown
   $('bridge-error').hidden = !status.error
   $('bridge-error').textContent = status.error ? fill(S.bridgeError, { error: status.error }) : ''
   const b = $('install')
@@ -250,6 +259,12 @@ const renderStatus = () => {
   b.disabled = busy
   b.classList.toggle('busy', busy)
   $('install-label').textContent = busy ? S.installing : status.state === 'not-installed' ? S.install : S.reinstall
+  // The sidebar's only hint that Install lives in Settings. Never while still checking.
+  const attention = !busy && (status.state === 'not-installed' || Boolean(status.error))
+
+  $('settings-dot').hidden = !attention
+  $('settings-dot').title = attention ? S.settingsAttention : ''
+  $('nav-settings').setAttribute('aria-label', attention ? `${S.settingsNav} · ${S.settingsAttention}` : S.settingsNav)
 }
 
 const showInstallResult = result => {
@@ -305,11 +320,8 @@ const install = async () => {
 // ---------- views ----------
 
 const setView = next => {
-  if (view === 'skin' && next !== 'skin') {
-    api.flushSettings().catch(() => {})
-  }
   view = next
-  for (const v of ['skin', 'gallery', 'upload']) {
+  for (const v of ['skin', 'gallery', 'upload', 'settings']) {
     $(`view-${v}`).hidden = v !== next
   }
   renderRows()
@@ -321,9 +333,6 @@ const showLibrary = async ref => {
 
   if (ref !== 'default' && entry === undefined) {
     return
-  }
-  if (subject?.kind === 'library' && subject.ref !== ref) {
-    api.flushSettings().catch(() => {})
   }
   const s = { kind: entry === null ? 'default' : 'library', ref, entry, skin: entry === null ? DEFAULT_SKIN : entry.skin, scene: null }
 
@@ -346,7 +355,7 @@ const settingsFor = () => {
   if (!subject || subject.kind === 'default' || (subject.entry && !subject.entry.ok)) {
     return null
   }
-  const raw = subject.kind === 'gallery' ? {} : (selection.settings[subject.ref] ?? {})
+  const raw = subject.kind === 'gallery' ? {} : drafts.current(subject.ref, selection.settings)
 
   return R.normalizeSettings(raw, R.parseSkin(subject.skin))
 }
@@ -359,7 +368,8 @@ const renderSkin = () => {
   $('back').hidden = !gallery
   $('back').textContent = `‹ ${S.back}`
   $('skin-name').textContent = s.kind === 'default' ? S.claudeDefault : broken ? s.ref : s.skin.name
-  const desc = s.kind === 'default' ? S.claudeDefaultDesc : broken ? S.brokenTitle : gallery ? [fill(S.byAuthor, { author: s.detail.author }), `v${s.detail.version}`, s.item ? fill(S.downloadsN, { n: s.item.downloads }) : null].filter(Boolean).join(' · ') : (s.skin.description ?? '')
+  const remix = gallery ? remixOfItem(s.detail.basedOn ? s.detail : s.item) : null
+  const desc = s.kind === 'default' ? S.claudeDefaultDesc : broken ? S.brokenTitle : gallery ? [fill(S.byAuthor, { author: s.detail.author }), `v${s.detail.version}`, s.item ? downloadsText(s.item.downloads) : null, remix].filter(Boolean).join(' · ') : (s.skin.description ?? '')
 
   $('skin-desc').textContent = desc
   $('skin-desc').title = desc
@@ -367,6 +377,9 @@ const renderSkin = () => {
   $('skin-body').hidden = broken
   $('broken').hidden = !broken
   $('report').hidden = !gallery
+  $('delete').hidden = !(s.kind === 'library' && deletable(s.entry))
+  $('delete').textContent = S.deleteSkin
+  $('discard').hidden = true
   if (s.kind === 'default' || broken) {
     tab = 'overview'
   }
@@ -389,6 +402,69 @@ const renderTabs = () => {
   }
   $('pane-overview').hidden = tab !== 'overview'
   $('pane-tune').hidden = tab !== 'tune'
+  $('pane-code').hidden = tab !== 'code'
+  $('skin-body').classList.toggle('code-mode', tab === 'code')
+  if (tab === 'code') {
+    renderCode()
+  }
+}
+
+// ---------- code tab ----------
+
+// The raw files, shown as text only (textContent in <pre><code>), never rendered.
+const showCodeFile = (which, text) => {
+  $(`code-${which}`).textContent = text ?? ''
+  $(`code-${which}-count`).textContent = text === null || text === undefined ? '' : fill(S.codeChars, { n: text.length.toLocaleString() })
+  $(`code-${which}-copy`).hidden = text === null || text === undefined
+  $(`code-${which}-copy`).textContent = S.copy
+}
+
+const renderCode = async () => {
+  const s = subject
+
+  if (s === null || s.kind === 'default') {
+    return
+  }
+  if (s.codeLoad === undefined) {
+    // Gallery details carry their files from main; library files are read on demand.
+    s.codeLoad = s.kind === 'gallery' ? Promise.resolve(s.detail?.code ?? { error: 'no files' }) : api.code(s.ref).catch(error => ({ error: cleanError(error) }))
+    $('code-check').textContent = S.codeLoading
+    $('code-check').className = 'code-check'
+  }
+  const code = await s.codeLoad
+
+  if (subject !== s || tab !== 'code') {
+    return
+  }
+  const ok = code.check?.ok === true
+  const errors = code.error ? [] : (code.check?.errors ?? [])
+
+  $('code-check').textContent = code.error ? fill(S.codeError, { error: code.error }) : ok ? S.codeChecksOk : S.codeChecksBad
+  $('code-check').className = `code-check ${ok ? 'ok' : 'bad'}`
+  $('code-errors').hidden = errors.length === 0
+  $('code-errors').replaceChildren(...errors.map(e => el('li', null, e)))
+  $('code-note').textContent = s.kind === 'gallery' ? S.codeNoteGallery : S.codeNote
+  showCodeFile('skin', code.skinJson ?? null)
+  const scene = typeof code.sceneSvg === 'string' ? code.sceneSvg : null
+
+  showCodeFile('scene', scene)
+  $('code-scene-pre').hidden = scene === null
+  $('code-no-scene').hidden = scene !== null || Boolean(code.error)
+  $('code-no-scene').textContent = S.codeNoScene
+}
+
+const copyCode = async which => {
+  const b = $(`code-${which}-copy`)
+
+  try {
+    await navigator.clipboard.writeText($(`code-${which}`).textContent)
+    b.textContent = S.copied
+    setTimeout(() => {
+      b.textContent = S.copy
+    }, CONFIRM_MS)
+  } catch {
+    window.getSelection().selectAllChildren($(`code-${which}`))
+  }
 }
 
 const renderHead = () => {
@@ -411,11 +487,12 @@ const renderHead = () => {
 
     return
   }
-  const isActive = s.ref === selection.theme
-  const broken = s.entry && !s.entry.ok
+  const broken = Boolean(s.entry && !s.entry.ok)
+  const state = drafts.button(s.ref, selection.theme)
 
-  apply.textContent = isActive ? S.applied : S.apply
-  apply.disabled = isActive || broken
+  apply.textContent = state === 'applied' ? S.applied : state === 'apply-changes' ? S.applyChanges : S.apply
+  apply.disabled = state === 'applied' || broken || s.applying === true
+  $('discard').hidden = state !== 'apply-changes'
 }
 
 const setVars = (node, vars) => {
@@ -450,18 +527,12 @@ const renderPreview = () => {
   preview.dataset.mono = shape.headingMono ? 'true' : 'false'
   preview.dataset.scene = hasScene ? 'true' : 'false'
 
-  const reactive = settings ? settings.reactive : true
-  const pct = R.toPercent(fillPct)
-
-  $('fill-row').hidden = !hasScene
-  $('fill').disabled = !reactive
-  $('fill-value').textContent = reactive ? `${pct}%` : fill(S.fillFixed, { pct: `${Math.round(settings.fixedFill * 100)}%` })
   if (!hasScene || settings === null) {
     setScene(null)
 
     return
   }
-  const f = R.fillFor(settings, pct)
+  const f = R.fillFor(settings, R.toPercent(PREVIEW_FILL_PCT))
 
   setScene(R.forceScheme(R.renderScene(s.scene, settings, f), c.mode))
 }
@@ -503,7 +574,18 @@ const renderDetails = () => {
   }
   const modes = R.modesOf(s.skin)
 
-  add(S.keyBackdrop, typeof s.scene === 'string' ? S.backdropAnimated : s.skin.backdrop?.scene ? S.backdropStill : S.backdropNone)
+  // From the scene text itself (library and gallery alike); "Scene" until it has loaded.
+  const backdropText = {
+    'animated-reactive': S.backdropAnimated,
+    animated: S.backdropAnimatedOnly,
+    'still-reactive': S.backdropStillReactive,
+    still: S.backdropStill,
+    scene: S.backdropScene,
+    solid: S.backdropSolid,
+    none: S.backdropNone,
+  }
+
+  add(S.keyBackdrop, backdropText[window.Backdrop.describeBackdrop(s.skin, s.scene)])
   add(S.keyModes, modes.length === 2 ? S.modesBoth : modes[0] === 'dark' ? S.modesDark : S.modesLight)
   add(S.keyType, R.mockShape(s.skin, settings).headingMono ? S.typeMono : S.typeDefault)
   const vars = s.skin.variables ?? []
@@ -527,6 +609,11 @@ const renderDetails = () => {
     add(S.keyAuthor, meta.author ?? s.entry.owner)
     add(S.keyVersion, `v${meta.version ?? 1}`)
     add(S.keySource, { bundled: S.sourceBundled, gallery: S.sourceGallery, upload: S.sourceUpload, local: S.sourceLocal }[meta.source] ?? '—')
+    if (meta.basedOn) {
+      const original = entryByRef(meta.basedOn)
+
+      add(S.keyRemix, remixText({ ref: meta.basedOn, name: original?.ok ? original.skin.name : null }))
+    }
   }
   add('Ref', s.ref, true)
 }
@@ -544,15 +631,15 @@ const fmt = (key, value) => {
   return String(Number(value.toFixed(3)))
 }
 
-let savedTimer = null
-
+// Tuning edits only the draft: the preview follows at once, nothing is written
+// until Apply / Apply changes.
 const changeSetting = (path, value) => {
   const s = subject
 
   if (s.kind !== 'library') {
     return
   }
-  const raw = structuredClone(selection.settings[s.ref] ?? {})
+  const raw = structuredClone(drafts.current(s.ref, selection.settings))
 
   if (path[0] === 'vars') {
     raw.vars = { ...(raw.vars ?? {}), [path[1]]: value }
@@ -561,17 +648,11 @@ const changeSetting = (path, value) => {
   } else {
     raw[path[0]] = value
   }
-  selection.settings[s.ref] = raw
+  drafts.set(s.ref, raw, R.parseSkin(s.skin), selection.settings)
   renderPreview()
-  api
-    .setSettings(s.ref, raw)
-    .then(() => {
-      clearTimeout(savedTimer)
-      $('tune-saved').textContent = S.tuneSaved
-      $('tune-saved').classList.add('show')
-      savedTimer = setTimeout(() => $('tune-saved').classList.remove('show'), 1500)
-    })
-    .catch(error => showConfirm(fill(S.saveFailed, { error: cleanError(error) })))
+  renderHead()
+  renderRows()
+  $('reset').disabled = Object.keys(R.sparseSettings(raw, R.parseSkin(s.skin))).length === 0
 }
 
 const rangeControl = (spec, value, path, label, disabled, onDraw) => {
@@ -615,23 +696,55 @@ const switchControl = (value, path, label, disabled, after) => {
   return wrap
 }
 
+// Skin palette for the picker's swatches: roles, then this mode's anchors, then the other's.
+const paletteOf = skin => {
+  const c = skin?.colors ?? {}
+  const other = mode === 'dark' ? 'light' : 'dark'
+  const values = [...Object.values(c.roles ?? {}), ...Object.values(c[mode]?.anchors ?? {}), ...Object.values(c[other]?.anchors ?? {})]
+
+  return values.filter(v => typeof v === 'string').map(v => v.slice(0, 7))
+}
+
+// A swatch + hex button that opens the in-app picker (no <input type=color>).
 const colorControl = (value, shown, path, label, disabled, nullable) => {
   const wrap = el('div', 'ctl')
-  const input = el('input')
+  const trigger = button('color-btn')
+  const chip = el('span', 'color-chip')
   const hex = el('span', 'num mono', shown)
-
-  Object.assign(input, { type: 'color', value: shown, disabled })
-  input.setAttribute('aria-label', label)
-  input.addEventListener('input', () => {
-    hex.textContent = input.value
-    changeSetting(path, input.value)
-    if (def) {
-      def.setAttribute('aria-pressed', 'false')
-    }
-  })
   let def = null
 
-  wrap.append(input, hex)
+  chip.style.backgroundColor = shown
+  trigger.append(chip, hex)
+  trigger.disabled = disabled
+  trigger.dataset.key = path.join('.')
+  trigger.setAttribute('aria-label', `${label}: ${shown}`)
+  trigger.setAttribute('aria-haspopup', 'dialog')
+  trigger.setAttribute('aria-expanded', 'false')
+  trigger.addEventListener('click', () => {
+    if (window.ColorPicker.isOpenFor(trigger)) {
+      window.ColorPicker.close()
+
+      return
+    }
+    window.ColorPicker.open({
+      anchor: trigger,
+      value: hex.textContent,
+      label,
+      palette: paletteOf(subject?.skin),
+      strings: S,
+      onInput: v => {
+        hex.textContent = v
+        chip.style.backgroundColor = v
+        trigger.setAttribute('aria-label', `${label}: ${v}`)
+        changeSetting(path, v)
+        if (def) {
+          def.setAttribute('aria-pressed', 'false')
+          def.disabled = disabled
+        }
+      },
+    })
+  })
+  wrap.append(trigger)
   if (nullable) {
     def = defaultChip(value === null, disabled, () => {
       changeSetting(path, null)
@@ -701,6 +814,8 @@ const renderTune = () => {
   const s = subject
   const box = $('tune-groups')
 
+  window.ColorPicker.close()
+
   box.replaceChildren()
   const settings = settingsFor()
 
@@ -765,24 +880,28 @@ const renderTune = () => {
   }
   $('reset').hidden = ro
   $('save-new').hidden = ro
-  $('reset').disabled = Object.keys(selection.settings[s.ref] ?? {}).length === 0
+  $('reset').disabled = Object.keys(R.sparseSettings(drafts.current(s.ref, selection.settings), R.parseSkin(s.skin))).length === 0
   if (ro) {
     $('new-form').hidden = true
   }
 }
 
-const resetTuning = async () => {
-  const ref = subject.ref
+// Reset and Discard change the draft only.
+const resetTuning = () => {
+  drafts.reset(subject.ref, R.parseSkin(subject.skin), selection.settings)
+  afterDraftChange()
+}
 
-  try {
-    await api.resetSettings(ref)
-    delete selection.settings[ref]
-    renderPreview()
-    renderTune()
-    showConfirm(S.resetDone)
-  } catch (error) {
-    showConfirm(fill(S.saveFailed, { error: cleanError(error) }))
-  }
+const discardDraft = () => {
+  drafts.discard(subject.ref)
+  afterDraftChange()
+}
+
+const afterDraftChange = () => {
+  renderPreview()
+  renderTune()
+  renderHead()
+  renderRows()
 }
 
 const openNewForm = () => {
@@ -849,24 +968,42 @@ const apply = async () => {
 
     return
   }
-  if (s.ref === selection.theme || (s.entry && !s.entry.ok)) {
+  if (drafts.button(s.ref, selection.theme) === 'applied' || (s.entry && !s.entry.ok) || s.applying) {
     return
   }
+  s.applying = true
   try {
-    await api.select(s.ref)
+    // Theme and this skin's draft go to main together; main checks and writes them.
+    const r = await api.select(s.ref, s.kind === 'default' ? null : drafts.current(s.ref, selection.settings))
+
     selection.theme = s.ref
-    renderRows()
-    renderHead()
+    if (r.sparse && Object.keys(r.sparse).length > 0) {
+      selection.settings[s.ref] = r.sparse
+    } else if (s.kind !== 'default') {
+      delete selection.settings[s.ref]
+    }
+    drafts.discard(s.ref)
     showConfirm(S.appliedNote)
   } catch (error) {
     showConfirm(fill(S.saveFailed, { error: cleanError(error) }))
+  } finally {
+    s.applying = false
+    if (subject === s) {
+      renderHead()
+      renderTune()
+    }
+    renderRows()
   }
 }
 
 let askAction = null
 
-const ask = (text, yes, action) => {
-  $('ask-text').textContent = text
+const ask = (text, yes, action, title = null) => {
+  if (title) {
+    $('ask-text').replaceChildren(el('strong', 'ask-title', title), ` ${text}`)
+  } else {
+    $('ask-text').textContent = text
+  }
   $('ask-yes').textContent = yes
   $('ask-no').textContent = S.cancel
   $('ask').hidden = false
@@ -876,6 +1013,121 @@ const ask = (text, yes, action) => {
 const hideAsk = () => {
   $('ask').hidden = true
   askAction = null
+}
+
+// ---------- delete from the library ----------
+
+// Gallery downloads and skins made or uploaded here; never official / Claude default.
+const deletable = entry => Boolean(entry) && entry.owner !== 'official' && entry.meta?.source !== 'bundled'
+
+const skinLabel = entry => (entry?.ok ? entry.skin.name : entry?.ref ?? '')
+
+const confirmDelete = ref => {
+  const entry = entryByRef(ref)
+
+  if (!deletable(entry)) {
+    return
+  }
+  const body = entry.meta?.source === 'local' ? S.deleteBodyLocal : S.deleteBody
+
+  ask(body, S.deleteSkin, () => deleteSkin(ref), fill(S.deleteTitle, { name: skinLabel(entry) }))
+  $('ask-no').focus()
+}
+
+const deleteSkin = async ref => {
+  const entry = entryByRef(ref)
+  const name = skinLabel(entry)
+  let r
+
+  try {
+    r = await api.deleteSkin(ref)
+  } catch (error) {
+    showConfirm(fill(S.deleteFailed, { error: cleanError(error) }))
+
+    return
+  }
+  drafts.discard(ref)
+  delete selection.settings[ref]
+  if (r.switchedToDefault) {
+    selection.theme = 'default'
+  }
+  library = await api.library()
+  thumbs.delete(ref)
+  await Promise.all(library.map(thumbFor))
+  renderLibraryList()
+  renderUploadLibrary()
+  if (view === 'skin' && subject?.ref === ref) {
+    await showLibrary('default')
+  }
+  showConfirm([fill(S.deletedSkin, { name }), r.switchedToDefault ? S.deletedDefault : null].filter(Boolean).join(' · '))
+}
+
+// Right-click menu on library rows: one item, Delete…
+let rowMenu = null
+
+const closeRowMenu = (refocus = false) => {
+  if (rowMenu === null) {
+    return
+  }
+  const { root, row, outside } = rowMenu
+
+  rowMenu = null
+  document.removeEventListener('pointerdown', outside, true)
+  root.remove()
+  if (refocus) {
+    row.focus()
+  }
+}
+
+const openRowMenu = (row, x, y) => {
+  closeRowMenu()
+  const ref = row.dataset.ref
+  const entry = entryByRef(ref)
+  const root = el('div', 'popover menu')
+  const item = button('menu-item danger-item', S.deleteMenu, () => {
+    closeRowMenu()
+    showLibrary(ref).then(() => confirmDelete(ref))
+  })
+
+  root.setAttribute('role', 'menu')
+  root.setAttribute('aria-label', fill(S.rowMenu, { name: skinLabel(entry) }))
+  item.setAttribute('role', 'menuitem')
+  root.append(item)
+  root.addEventListener('keydown', e => {
+    if (e.key === 'Escape' || e.key === 'Tab') {
+      e.preventDefault()
+      closeRowMenu(true)
+    }
+  })
+  const outside = e => {
+    if (!root.contains(e.target)) {
+      closeRowMenu()
+    }
+  }
+
+  document.addEventListener('pointerdown', outside, true)
+  document.body.append(root)
+  const w = root.offsetWidth
+  const h = root.offsetHeight
+
+  root.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`
+  root.style.top = `${Math.max(8, Math.min(y, window.innerHeight - h - 8))}px`
+  rowMenu = { root, row, outside }
+  item.focus()
+}
+
+const onRowContextMenu = event => {
+  const row = event.target.closest('#lib-list .row')
+
+  if (!row || !deletable(entryByRef(row.dataset.ref))) {
+    return
+  }
+  event.preventDefault()
+  // Keyboard (context-menu key / Shift+F10) has no pointer position: use the row.
+  const r = row.getBoundingClientRect()
+  const fromKeyboard = event.clientX === 0 && event.clientY === 0
+
+  openRowMenu(row, fromKeyboard ? r.left + 24 : event.clientX, fromKeyboard ? r.bottom : event.clientY)
 }
 
 const report = () => {
@@ -924,12 +1176,24 @@ const miniPreview = item => {
   side.append(el('i', 'mb w70'), el('i', 'mb w50'), el('i', 'mb w60'))
   main.append(el('i', 'mt w90'), el('i', 'mt w70'), el('i', 'macc'), el('i', 'mbub'))
   box.append(side, main)
+  // The list only says a scene exists, not what it does: "Scene" until the detail loads it.
   if (item.hasScene) {
-    box.append(el('span', 'mini-tag', S.animated))
+    box.append(el('span', 'mini-tag', S.backdropScene))
   }
 
   return box
 }
+
+// "Remix of <name> by <author>" for a declared remix, else null. Text only.
+const remixText = basedOn => {
+  if (!basedOn?.ref) {
+    return null
+  }
+  const [author, slug] = basedOn.ref.split('.')
+
+  return fill(S.remixOf, { name: basedOn.name || slug, author })
+}
+const remixOfItem = item => (item?.basedOn ? remixText({ ref: item.basedOn, name: item.basedOnName }) : null)
 
 const buildTile = item => {
   const tile = button('tile')
@@ -944,7 +1208,12 @@ const buildTile = item => {
   if (state) {
     name.append(el('span', `badge ${state === 'update' ? 'badge-accent' : ''}`, state === 'update' ? fill(S.updateTo, { v: item.version }) : S.savedBadge))
   }
-  meta.append(name, el('div', 'tile-sub', `${item.author} · ${fill(S.downloadsN, { n: item.downloads })}`))
+  meta.append(name, el('div', 'tile-sub', `${item.author} · ${downloadsText(item.downloads)}`))
+  const remix = remixOfItem(item)
+
+  if (remix) {
+    meta.append(el('div', 'tile-sub', remix))
+  }
   tile.append(miniPreview(item), meta)
   tile.title = item.description
   tile.addEventListener('click', () => openDetail(item))
@@ -965,17 +1234,9 @@ const renderGrid = () => {
     b.setAttribute('aria-checked', b.dataset.sort === G.sort ? 'true' : 'false')
   }
   const select = $('tag')
-  const current = G.tag
 
-  select.replaceChildren(el('option', null, S.allTags))
-  select.firstChild.value = ''
-  for (const t of [...G.tags].sort()) {
-    const o = el('option', null, t)
-
-    o.value = t
-    select.append(o)
-  }
-  select.value = current
+  select.setOptions([{ value: '', label: S.allTags }, ...[...G.tags].sort().map(t => ({ value: t, label: t }))])
+  select.value = G.tag
 }
 
 const markGallerySaved = () => {
@@ -1051,10 +1312,72 @@ const openDetail = async item => {
 
 // ---------- upload ----------
 
-const U = { auth: { configured: false, signedIn: false, login: null }, flow: null, check: null, mine: null, mineError: null, sending: false, result: null }
+const U = { auth: { configured: false, signedIn: false, handle: null }, flow: null, name: { value: '', error: null, busy: false }, check: null, mine: null, mineError: null, sending: false, result: null }
+// Same pattern the gallery enforces for public names.
+const HANDLE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/
+
+const googleButton = () => {
+  const b = button('ghost flat google-btn', '', startSignIn)
+  const mark = el('span', 'g-mark', 'G')
+
+  mark.setAttribute('aria-hidden', 'true')
+  b.append(mark, el('span', null, S.signIn))
+
+  return b
+}
+
+// Gallery errors that are about the account, in plain words; anything else passes through.
+const serverError = message => /sign-in not configured/.test(message) ? S.serverNoSignIn : /banned/.test(message) ? S.banned : /signing keys/.test(message) ? S.googleKeysDown : /invalid token|wrong (issuer|audience)|token expired|issued in the future|unknown signing key|Authorization: Bearer/.test(message) ? S.tokenRejected : message
+const nameError = message => /handle taken/.test(message) ? S.nameTaken : /handle reserved/.test(message) ? S.nameReserved : /handle locked/.test(message) ? S.nameLocked : /handle changes per 24 hours/.test(message) ? S.nameRate : /3 to 32|not a valid handle/i.test(message) ? S.nameBad : serverError(message)
+
+const chooseNameRow = () => {
+  const wrap = el('div', 'stack choose-name')
+  const label = el('label', 'field-label', S.chooseName)
+  const input = el('input', 'mono')
+  const go = button('primary small', U.name.busy ? S.claiming : S.claimName, () => claimName())
+  const err = el('span', 'error-text small-text')
+
+  input.id = 'up-handle'
+  label.htmlFor = 'up-handle'
+  input.type = 'text'
+  input.maxLength = 32
+  input.autocomplete = 'off'
+  input.spellcheck = false
+  input.placeholder = 'your-name'
+  input.value = U.name.value
+  err.setAttribute('aria-live', 'polite')
+  const sync = () => {
+    const v = U.name.value
+    const bad = v !== '' && !HANDLE.test(v)
+
+    err.textContent = U.name.error ?? (bad ? S.nameBad : '')
+    err.hidden = err.textContent === ''
+    input.setAttribute('aria-invalid', String(bad || U.name.error !== null))
+    go.disabled = U.name.busy || !HANDLE.test(v)
+  }
+
+  input.addEventListener('input', () => {
+    U.name.value = input.value.trim().toLowerCase()
+    U.name.error = null
+    sync()
+  })
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !go.disabled) {
+      claimName()
+    }
+  })
+  const row = el('div', 'inline')
+
+  row.append(input, go)
+  wrap.append(label, row, err, el('span', 'muted-text small-text', S.chooseNameHelp))
+  sync()
+
+  return wrap
+}
 
 const renderAccount = () => {
   const dd = $('up-account')
+  const hadFocus = document.activeElement?.id === 'up-handle'
 
   dd.replaceChildren()
   if (!U.auth.configured) {
@@ -1062,36 +1385,41 @@ const renderAccount = () => {
 
     return
   }
-  if (U.flow) {
-    if (U.flow.error) {
-      dd.append(el('span', 'error-text', U.flow.error))
-      dd.append(button('ghost flat', S.signIn, startSignIn))
-
-      return
-    }
-    dd.append(el('span', 'muted-text', S.codeLabel))
-    const code = el('span', 'device-code', U.flow.userCode)
-
-    code.setAttribute('aria-live', 'polite')
+  if (U.flow?.waiting) {
     const row = el('div', 'inline')
 
-    row.append(button('primary small', S.openGithub, () => api.openDevicePage()), button('tiny-link', S.cancel, cancelSignIn))
-    dd.append(code, row, el('span', 'muted-text', S.waiting))
+    row.append(el('span', 'muted-text', S.waiting), button('tiny-link', S.cancel, cancelSignIn))
+    dd.append(row)
 
     return
   }
   if (U.auth.signedIn) {
     const row = el('div', 'inline')
 
-    row.append(el('span', null, fill(S.signedInAs, { login: U.auth.login ?? '…' })), button('ghost flat', S.signOut, signOut))
+    row.append(el('span', null, U.auth.handle ? fill(S.signedInAs, { handle: U.auth.handle }) : S.signedInNoName), button('ghost flat', S.signOut, signOut))
     dd.append(row)
+    if (U.auth.error) {
+      dd.append(el('span', 'error-text', serverError(U.auth.error)))
+    }
+    // Only ask for a name when the gallery actually said there is none.
+    if (!U.auth.handle && !U.auth.error) {
+      dd.append(chooseNameRow())
+      if (hadFocus) {
+        $('up-handle').focus()
+      }
+    }
     if (U.auth.persisted === false) {
       dd.append(el('span', 'muted-text small-text', S.sessionOnly))
     }
 
     return
   }
-  dd.append(button('ghost flat', S.signIn, startSignIn))
+  const err = U.flow?.error ?? (U.auth.error ? serverError(U.auth.error) : null)
+
+  if (err) {
+    dd.append(el('span', 'error-text', err))
+  }
+  dd.append(googleButton(), el('span', 'muted-text small-text privacy-note', S.privacyNote))
 }
 
 const renderChecks = () => {
@@ -1109,12 +1437,12 @@ const renderChecks = () => {
   const send = $('up-send')
 
   send.textContent = U.sending ? S.uploading : S.upload
-  send.disabled = U.sending || !U.auth.configured || !U.auth.signedIn || !U.check?.ok
-  $('up-result').textContent = U.result ?? (U.auth.configured && !U.auth.signedIn && U.check?.ok ? S.signInFirst : '')
+  send.disabled = U.sending || !U.auth.configured || !U.auth.signedIn || !U.auth.handle || !U.check?.ok
+  $('up-result').textContent = U.result ?? (U.auth.configured && U.check?.ok ? (!U.auth.signedIn ? S.signInFirst : !U.auth.handle ? S.nameFirst : '') : '')
 }
 
 const renderMine = () => {
-  const show = U.auth.configured && U.auth.signedIn
+  const show = U.auth.configured && U.auth.signedIn && Boolean(U.auth.handle)
 
   $('up-mine-key').hidden = !show
   $('up-mine').hidden = !show
@@ -1146,7 +1474,7 @@ const renderMine = () => {
     const name = el('div', 'mine-name')
 
     name.append(el('span', null, item.name), el('span', 'mono muted-text', item.ref))
-    const meta = el('span', 'muted-text', `v${item.version} · ${fill(S.downloadsN, { n: item.downloads })}`)
+    const meta = el('span', 'muted-text', `v${item.version} · ${downloadsText(item.downloads)}`)
     const flag = el('span', 'badge badge-warn', fill(S.hiddenN, { n: item.reports }))
 
     flag.hidden = !item.hidden
@@ -1165,22 +1493,25 @@ const renderUpload = () => {
   renderAccount()
   renderChecks()
   renderMine()
+  renderUploadLibrary()
+}
+
+// Only skins the person made (service.js isUploadable): gallery downloads and
+// built-in skins never appear.
+const uploadable = e => e.ok && (e.meta?.source === 'local' || e.meta?.source === 'upload')
+
+// The "From library…" dropdown on Upload.
+const renderUploadLibrary = () => {
   const select = $('up-library')
   const keep = select.value
+  const mine = library.filter(uploadable)
 
-  select.replaceChildren(el('option', null, S.fromLibrary))
-  select.firstChild.value = ''
-  for (const e of library.filter(x => x.ok)) {
-    const o = el('option', null, `${e.skin.name} (${e.ref})`)
-
-    o.value = e.ref
-    select.append(o)
-  }
-  select.value = library.some(e => e.ref === keep) ? keep : ''
+  select.setOptions([{ value: '', label: S.fromLibrary }, ...mine.map(e => ({ value: e.ref, label: `${e.skin.name} (${e.ref})` }))])
+  select.value = mine.some(e => e.ref === keep) ? keep : ''
 }
 
 const loadMine = async () => {
-  if (!U.auth.signedIn) {
+  if (!U.auth.signedIn || !U.auth.handle) {
     return
   }
   U.mine = null
@@ -1189,7 +1520,7 @@ const loadMine = async () => {
   try {
     U.mine = (await api.mySkins()).skins
   } catch (error) {
-    U.mineError = cleanError(error)
+    U.mineError = serverError(cleanError(error))
   }
   renderMine()
 }
@@ -1206,36 +1537,43 @@ const showUpload = async () => {
   await loadMine()
 }
 
-const startSignIn = async () => {
-  try {
-    const code = await api.authStart()
+const authError = error => error === 'access_denied' ? S.authDenied : error === 'timeout' ? S.authExpired : error === 'browser' ? S.authBrowser : fill(S.authFailed, { error })
 
-    if (code.error) {
-      U.flow = { error: fill(S.authFailed, { error: code.error }) }
-      renderAccount()
+const startSignIn = async () => {
+  const flow = { waiting: true }
+
+  try {
+    U.flow = flow
+    renderAccount()
+    const started = await api.authStart()
+
+    if (started.error) {
+      U.flow = started.error === 'not-configured' ? null : { error: authError(started.error) }
+      renderUpload()
 
       return
     }
-    U.flow = code
-    renderAccount()
     const r = await api.authWait()
 
-    if (U.flow !== code) {
+    if (U.flow !== flow) {
       return
     }
     U.flow = null
     if (r.error) {
       if (r.error !== 'cancelled') {
-        U.flow = { error: r.error === 'access_denied' ? S.authDenied : r.error === 'expired_token' ? S.authExpired : fill(S.authFailed, { error: r.error }) }
+        U.flow = { error: authError(r.error) }
       }
     } else {
       U.auth = r
+      U.name = { value: '', error: null, busy: false }
     }
     renderUpload()
     await loadMine()
   } catch (error) {
-    U.flow = { error: fill(S.authFailed, { error: cleanError(error) }) }
-    renderAccount()
+    if (U.flow === flow) {
+      U.flow = { error: fill(S.authFailed, { error: cleanError(error) }) }
+      renderAccount()
+    }
   }
 }
 
@@ -1245,13 +1583,71 @@ const cancelSignIn = async () => {
   renderAccount()
 }
 
-const signOut = async () => {
-  U.auth = await api.signOut().catch(() => ({ ...U.auth, signedIn: false, login: null }))
-  U.mine = null
-  renderUpload()
+const claimName = async () => {
+  if (U.name.busy || !HANDLE.test(U.name.value)) {
+    return
+  }
+  U.name.busy = true
+  U.name.error = null
+  renderAccount()
+  try {
+    U.auth = { ...U.auth, ...(await api.claimHandle(U.name.value)) }
+    U.name = { value: '', error: null, busy: false }
+    renderUpload()
+    await loadMine()
+  } catch (error) {
+    U.name.busy = false
+    U.name.error = nameError(cleanError(error))
+    renderUpload()
+  }
 }
 
+const signOut = async () => {
+  U.flow = null
+  U.auth = await api.signOut().catch(() => ({ ...U.auth, signedIn: false, handle: null }))
+  U.mine = null
+  U.name = { value: '', error: null, busy: false }
+  renderUpload()
+  renderSettingsAccount()
+}
+
+// ---------- settings ----------
+
+// Only reflects the sign-in state; the sign-in and public-name flow stay on Upload.
+const renderSettingsAccount = () => {
+  const b = $('set-account-btn')
+
+  if (U.auth.signedIn) {
+    $('set-account').textContent = U.auth.handle ? fill(S.signedInAs, { handle: U.auth.handle }) : S.signedInNoName
+    b.textContent = S.signOut
+  } else {
+    $('set-account').textContent = S.notSignedIn
+    b.textContent = S.goToUpload
+  }
+}
+
+const showSettings = async () => {
+  setView('settings')
+  renderStatus()
+  renderSettingsAccount()
+  $('set-version').textContent = appVersion ? `v${appVersion}` : ''
+  try {
+    U.auth = await api.authState()
+  } catch {
+    // keep the last state
+  }
+  renderSettingsAccount()
+}
+
+// "This is <name> by <author> from the gallery…", from the structured answer.
+const copyText = c => fill(S.copyOfGallery, { name: c.name, author: c.author })
+
 const setCheck = r => {
+  if (r && r.copyOf) {
+    r = { ...r, errors: [copyText(r.copyOf)] }
+  } else if (r && r.notMine) {
+    r = { ...r, errors: [S.notMine] }
+  }
   U.check = r
   U.result = null
   renderChecks()
@@ -1275,12 +1671,17 @@ const sendUpload = async () => {
   try {
     const r = await api.upload()
 
+    if (r.ok === false) {
+      U.result = r.copyOf ? copyText(r.copyOf) : fill(S.uploadFailed, { error: r.error ?? '' })
+
+      return
+    }
     U.result = fill(S.uploadedNew, { ref: r.ref, v: r.version })
     library = await api.library()
     await Promise.all(library.map(thumbFor))
     renderLibraryList()
   } catch (error) {
-    U.result = fill(S.uploadFailed, { error: cleanError(error) })
+    U.result = fill(S.uploadFailed, { error: serverError(cleanError(error)) })
   } finally {
     U.sending = false
     renderUpload()
@@ -1296,6 +1697,60 @@ const poll = async () => {
     renderStatus()
   } catch {
     // keep the last known status
+  }
+}
+
+// Skins copied into ~/.claude-theme-switcher/skins/ while the app is open show
+// up when the window comes back to the front (at most once a second). Every
+// unapplied draft stays; the selection changes only if its skin is gone or
+// broken (the service resets it to Claude default).
+const REFRESH_MIN_MS = 1000
+let lastLibraryRefresh = 0
+let libraryRefreshing = false
+
+const refreshLibrary = async () => {
+  const now = Date.now()
+
+  if (libraryRefreshing || now - lastLibraryRefresh < REFRESH_MIN_MS) {
+    return
+  }
+  lastLibraryRefresh = now
+  libraryRefreshing = true
+  try {
+    const fresh = await api.refreshLibrary()
+    const next = fresh.library
+    // The applied skin was gone or broken: Claude is back to its default look.
+    const selChanged = Boolean(fresh.reset)
+
+    if (selChanged) {
+      selection = { theme: fresh.selection.theme, settings: fresh.selection.settings ?? {} }
+      showConfirm(fill(S.staleReset, { ref: fresh.reset }))
+    }
+    // Nothing changed on disk: leave the rows (and keyboard focus) alone.
+    if (!selChanged && JSON.stringify(next) === JSON.stringify(library)) {
+      return
+    }
+    library = next
+    await Promise.all(library.map(thumbFor))
+    renderLibraryList()
+    renderUploadLibrary()
+    if (subject && subject.kind === 'library') {
+      // Files may have changed: the Code tab reads them again.
+      subject.codeLoad = undefined
+      if (view === 'skin' && tab === 'code') {
+        renderCode()
+      }
+    }
+    // The skin on screen is gone: fall back to Claude default.
+    if (view === 'skin' && subject?.kind === 'library' && entryByRef(subject.ref) === undefined) {
+      await showLibrary('default')
+    } else if (selChanged && view === 'skin' && subject && subject.kind !== 'gallery') {
+      renderHead()
+    }
+  } catch {
+    // keep the list we have
+  } finally {
+    libraryRefreshing = false
   }
 }
 
@@ -1321,6 +1776,22 @@ const texts = () => {
   t('browse-label', 'browseLabel')
   t('nav-gallery-label', 'galleryNav')
   t('nav-upload-label', 'uploadNav')
+  t('nav-settings-label', 'settingsNav')
+  t('tab-code', 'tabCode')
+  t('settings-title', 'settingsTitle')
+  t('settings-sub', 'settingsSub')
+  t('sec-connection', 'secConnection')
+  t('sec-account', 'secAccount')
+  t('sec-about', 'secAbout')
+  t('set-status-key', 'keyStatus')
+  t('set-plugin-key', 'keyPlugin')
+  t('set-install-key', 'keyInstall')
+  t('set-connection-help', 'connectionHelp')
+  t('set-google-key', 'keyGoogle')
+  t('set-app-key', 'keyApp')
+  t('set-app-name', 'appName')
+  t('set-version-key', 'keyAppVersion')
+  t('set-source-key', 'keySourceCode')
   t('mode-dark', 'dark')
   t('mode-light', 'light')
   t('tab-overview', 'tabOverview')
@@ -1328,9 +1799,8 @@ const texts = () => {
   t('mock-text', 'mockText')
   t('mock-user', 'mockUser')
   t('mock-input', 'mockInput')
-  t('hint', 'hint')
-  t('fill-label', 'fillLabel')
   t('reset', 'resetDefaults')
+  t('discard', 'discard')
   t('save-new', 'saveAsNew')
   t('new-name-label', 'newName')
   t('new-slug-label', 'newSlug')
@@ -1356,9 +1826,18 @@ const texts = () => {
 }
 
 const wire = () => {
+  // Custom dropdowns in place of <select>; same ids, .value and 'change'.
+  for (const [id, key] of [['tag', 'tagFilter'], ['up-library', 'librarySource']]) {
+    $(id).setAttribute('aria-label', S[key])
+    window.Dropdown.upgrade($(id))
+  }
   $('lib-list').addEventListener('keydown', onListKey)
   $('nav-gallery').addEventListener('click', showGallery)
   $('nav-upload').addEventListener('click', showUpload)
+  $('nav-settings').addEventListener('click', showSettings)
+  $('set-account-btn').addEventListener('click', () => (U.auth.signedIn ? signOut() : showUpload()))
+  $('code-skin-copy').addEventListener('click', () => copyCode('skin'))
+  $('code-scene-copy').addEventListener('click', () => copyCode('scene'))
   $('back').addEventListener('click', showGallery)
   for (const b of document.querySelectorAll('#view-skin .segmented button')) {
     b.addEventListener('click', () => {
@@ -1377,12 +1856,10 @@ const wire = () => {
       setMode(e.matches ? 'dark' : 'light')
     }
   })
-  $('fill').addEventListener('input', () => {
-    fillPct = Number($('fill').value)
-    renderPreview()
-  })
   $('apply').addEventListener('click', apply)
   $('report').addEventListener('click', report)
+  $('delete').addEventListener('click', () => confirmDelete(subject?.ref))
+  $('lib-list').addEventListener('contextmenu', onRowContextMenu)
   $('ask-yes').addEventListener('click', () => {
     const action = askAction
 
@@ -1391,6 +1868,7 @@ const wire = () => {
   })
   $('ask-no').addEventListener('click', hideAsk)
   $('reset').addEventListener('click', resetTuning)
+  $('discard').addEventListener('click', discardDraft)
   $('save-new').addEventListener('click', openNewForm)
   $('new-form').addEventListener('submit', saveNew)
   $('new-cancel').addEventListener('click', () => {
@@ -1447,9 +1925,6 @@ const wire = () => {
       window.getSelection().selectAllChildren($('manual-text'))
     }
   })
-  window.addEventListener('beforeunload', () => {
-    api.flushSettings().catch(() => {})
-  })
 }
 
 const start = async () => {
@@ -1460,7 +1935,10 @@ const start = async () => {
   selection = { theme: init.selection.theme, settings: init.selection.settings ?? {} }
   status = init.status
   isShot = init.shot !== null
+  appVersion = await api.version().catch(() => '')
   document.documentElement.lang = init.lang === 'zh' ? 'zh-CN' : 'en'
+  // Frameless window: the CSS reserves room for the traffic lights / caption buttons.
+  document.body.classList.add(`platform-${init.platform}`)
   texts()
   wire()
   await Promise.all(library.map(thumbFor))
@@ -1470,9 +1948,16 @@ const start = async () => {
   const shotView = init.shot?.view ?? 'library'
   const firstRef = init.shot?.select && init.shot.view !== 'detail' ? init.shot.select : (selection.theme ?? library.find(e => e.ok)?.ref ?? 'default')
 
-  await showLibrary(entryByRef(firstRef) || firstRef === 'default' ? firstRef : 'default')
-  if (shotView === 'tune') {
-    tab = 'tune'
+  const firstEntry = entryByRef(firstRef)
+
+  // Screenshot mode can preset an unapplied draft (TS_DRAFT) for that skin.
+  if (init.shot?.draft && firstEntry?.ok) {
+    drafts.set(firstRef, init.shot.draft, R.parseSkin(firstEntry.skin), selection.settings)
+    renderRows()
+  }
+  await showLibrary(firstEntry || firstRef === 'default' ? firstRef : 'default')
+  if (shotView === 'tune' || shotView === 'code') {
+    tab = shotView
     renderTabs()
   } else if (shotView === 'gallery') {
     await showGallery()
@@ -1485,10 +1970,42 @@ const start = async () => {
     }
   } else if (shotView === 'upload') {
     await showUpload()
+  } else if (shotView === 'settings') {
+    await showSettings()
+  }
+  // TS_OPEN_PICKER: the Tune tab with that colour control's picker open.
+  if (init.shot?.picker && view === 'skin' && subject?.kind === 'library') {
+    const key = init.shot.picker === 'accent' ? 'accent' : `vars.${init.shot.picker}`
+
+    openGroups.add(key === 'accent' ? 'panels' : 'vars')
+    tab = 'tune'
+    renderTabs()
+    renderTune()
+    document.querySelector(`.color-btn[data-key="${CSS.escape(key)}"]`)?.click()
+  }
+  // TS_DELETE=confirm|menu: the delete confirmation, or the row's right-click menu.
+  if (init.shot?.del && view === 'skin' && deletable(subject?.entry)) {
+    const row = document.querySelector(`#lib-list .row[data-ref="${CSS.escape(subject.ref)}"]`)
+
+    if (init.shot.del === 'menu' && row) {
+      const r = row.getBoundingClientRect()
+
+      openRowMenu(row, r.left + 120, r.top + r.height / 2)
+    } else {
+      confirmDelete(subject.ref)
+    }
+  }
+  if (init.shot?.dropdown) {
+    window.Dropdown.open($(init.shot.dropdown))
+  }
+  // TS_TAB: a tab in whichever skin view is open (library or gallery detail).
+  if (init.shot?.tab && view === 'skin' && !$('tabs').hidden) {
+    tab = init.shot.tab
+    renderTabs()
   }
 
   // The CLI check can take a few seconds; show the heartbeat-only status first.
-  api
+  const refreshed = api
     .refresh()
     .then(s => {
       status = s
@@ -1496,8 +2013,20 @@ const start = async () => {
     })
     .catch(() => {})
   setInterval(poll, POLL_MS)
+  lastLibraryRefresh = Date.now()
+  window.addEventListener('focus', refreshLibrary)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      refreshLibrary()
+    }
+  })
 
   if (isShot) {
+    // Capture the checked bridge status, not "Checking…".
+    await refreshed
+    if (tab === 'code') {
+      await renderCode()
+    }
     await sceneLoaded
     await nextFrame()
     api.ready()

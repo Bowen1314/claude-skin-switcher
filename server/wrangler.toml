@@ -5,6 +5,12 @@ workers_dev = true
 preview_urls = false
 
 # Secrets (set with `npx wrangler secret put`): ADMIN_TOKEN, IP_SALT
+# IP_SALT is also the HMAC key for account ids (sub_hash): rotating it orphans every account.
+
+[vars]
+# Google OAuth client ID that ID tokens must be issued to (aud). While empty,
+# every authenticated call answers 503 "sign-in not configured".
+GOOGLE_CLIENT_ID = "557060565691-aqiljt7ml6g9o2ap4bvfm10du9n8lkme.apps.googleusercontent.com"
 
 [[d1_databases]]
 binding = "DB"

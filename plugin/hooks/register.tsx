@@ -4,7 +4,7 @@ import type { Register } from 'claude-code'
 import { buildLook, fillFor, normalizeSettings, parseSkin, renderScene, sceneKey } from './skin'
 import type { Settings, Skin } from './skin'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 
 // The Theme Switcher app writes selection.json here and saves skins under
 // skins/<ref>/; this mod draws what it names. See docs/skin-format.md.

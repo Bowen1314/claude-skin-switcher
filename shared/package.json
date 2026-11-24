@@ -2,6 +2,6 @@
   "name": "@claude-theme-switcher/shared",
   "private": true,
   "type": "module",
-  "exports": { "./skin-validate.js": "./skin-validate.js" },
+  "exports": { "./skin-validate.js": "./skin-validate.js", "./fingerprint.js": "./fingerprint.js" },
   "scripts": { "test": "node --test test/*.test.js" }
 }

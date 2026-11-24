@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { buildLook, normalizeSettings, parseSkin, sceneKey } from '../hooks/skin'
+import { buildLook, normalizeSettings, parseSkin, renderScene, sceneKey } from '../hooks/skin'
 
 type Hooks = Parameters<typeof mock.clock>[0]
 type ThemeCall = { kind: 'set'; scene?: string; glass?: unknown; style?: unknown; accentSeen?: string } | { kind: 'clear' }
@@ -237,4 +237,27 @@ test('the terminal and other plugins’ scenes are left alone', async $ => {
   const ui = await $.ui.mount({ plugin: 'theme-switcher', component: 'Backdrop', surface: 'terminal', props: { scene: sceneKey('alice.tiny'), plugin: 'theme-switcher', glass: false } })
   expect(await ui.find({ type: 'Svg' })).toBeUndefined()
   await ui.unmount()
+})
+
+// Keys and values reach the scene's <style> as `--v-key:value;`, so neither may
+// carry `;`, `}` or `</style>`, whatever skin.json or selection.json say.
+test('variable keys and values cannot break out of the injected CSS', () => {
+  const skin = parseSkin(
+    tinySkin({
+      variables: [
+        { key: 'a}</style><script>x', type: 'color', default: '#ffffff' },
+        { key: 'Glow', type: 'color', default: '#ffffff' },
+        { key: 'glow', type: 'color', default: 'red;}</style>' },
+        { key: 'size', type: 'range', min: 0, max: 1, step: 0.1, default: '1;}' },
+        { key: 'stars', type: 'toggle', default: '1}' },
+      ],
+    }),
+  )
+  expect(skin.variables.map(v => v.key)).toEqual(['size', 'stars'])
+  const settings = normalizeSettings({ dim: '0.5"/><script>', vars: { size: '9}</style>', stars: '}</style><script>', glow: '#000000;}' } }, skin)
+  const out = renderScene(TINY_SCENE, settings, 0.5)
+
+  expect(out).toContain('svg{--ctx:0.5;--v-size:0;--v-stars:1;}</style>')
+  expect(out).not.toContain('<script')
+  expect(out.split('</style>').length).toBe(2)
 })

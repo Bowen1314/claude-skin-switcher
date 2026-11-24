@@ -7,7 +7,7 @@ A skin is **data only**: one `skin.json` and, optionally, one `scene.svg`. No co
 <home>/.claude-theme-switcher/skins/<ref>/scene.svg     (optional)
 ```
 
-`<home>` is `HOME` on macOS and `USERPROFILE` on Windows. `<ref>` is `<owner>.<slug>`: `official.firefly-meadow` for the built-ins, `<github-login>.<slug>` for gallery skins (logins lower-cased). `default` is reserved: it means "no skin, the app's own look".
+`<home>` is `HOME` on macOS and `USERPROFILE` on Windows. `<ref>` is `<owner>.<slug>`: `official.firefly-meadow` for the built-ins, `<handle>.<slug>` for gallery skins (the handle is the public name a gallery account claims: lower-case, 3–32 characters). `default` is reserved: it means "no skin, the app's own look".
 
 ## skin.json
 
@@ -17,7 +17,7 @@ A skin is **data only**: one `skin.json` and, optionally, one `scene.svg`. No co
   "slug": "graphite-circuit",            // ^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$
   "name": "Graphite Circuit",            // 1–40 chars
   "description": "Graphite and one signal cyan…", // 0–140 chars
-  "author": "official",                  // set by the gallery from the GitHub login; ignored on upload
+  "author": "official",                  // set by the gallery from the uploader's handle; ignored on upload
   "version": 3,                          // integer, set by the gallery (1, 2, …); ignored on upload
   "tags": ["dark", "minimal"],           // 0–5 tags, each ^[a-z0-9-]{1,20}$
 
@@ -83,6 +83,32 @@ Allowed: shapes, paths, groups, gradients, patterns, `<style>` with CSS animatio
 Refused (by the gallery, the app, and Claude itself): `<script>`, `<image>`, `<foreignObject>`, `<iframe>`, `<use>` pointing outside the file, any `on…=` attribute, `href`/`xlink:href` other than `#fragment`, `url(` other than `url(#id)`, `@import`, `@font-face`, `<!DOCTYPE`, `<!ENTITY`, `CDATA`, `<?` processing instructions, embedded data URIs. Comments must be plain words (no `<`, `--`, `href`, `(` or `@` inside).
 
 Motion should be slow: nothing may flash more than three times a second.
+
+Structure: well-formed XML with exact-case SVG element names (no `<marker>`); every attribute written `name="value"` (quoted, no `<` or `>` inside, none twice); `<style>` closed and text only; `xmlns` / `xmlns:xlink` only on the root, with the SVG / XLink namespaces; no other namespaced attributes besides `xlink:href`, `xml:space` and `xml:lang`; each `id` once; no reference cycles through `href` or `url(#…)`; nothing after `</svg>`; an element with `data-ctx` must not set `visibility` (the bridge does).
+
+CSS (in `<style>`, `style=""` and attribute values): only `@keyframes`, `@media` and `@supports`; only these functions: `url(#id)`, `var`, `calc`, `min`, `max`, `clamp`, `abs`, `round`, `sin`, `cos`, `rgb(a)`, `hsl(a)`, `hwb`, `lab`, `lch`, `oklab`, `oklch`, `color`, `color-mix`, `light-dark`, `translate(X|Y)`, `scale(X|Y)`, `rotate`, `skew(X|Y)`, `matrix`, `cubic-bezier`, `steps`, `linear`, `path`, `polygon`, `circle`, `ellipse`, `inset`, the filter functions below, and the selectors `:not`, `:is`, `:where`, `:nth-(last-)child`, `:nth-(last-)of-type`. CSS comments are ignored when checking.
+
+SMIL may animate only: `opacity`, `fill`, `fill-opacity`, `stroke`, `stroke-opacity`, `stroke-width`, `stroke-dasharray`, `stroke-dashoffset`, `stop-color`, `stop-opacity`, `flood-color`, `flood-opacity`, `color`, `visibility`, `display`, `transform`, `gradientTransform`, `patternTransform`, `offset`, `pathLength`, `startOffset`, `x`, `y`, `x1`, `y1`, `x2`, `y2`, `cx`, `cy`, `r`, `rx`, `ry`, `fx`, `fy`, `fr`, `width`, `height`, `d`, `points`, `font-size`, `letter-spacing`, `word-spacing`.
+
+### Resource limits
+
+So a scene can't stall the app or Claude's renderer:
+
+| limit | value | the official skins |
+|---|---|---|
+| elements (start tags, including `<svg>`) | at most 2,000 | 452 (Firefly Meadow), 328 (Graphite Circuit) |
+| nesting depth (`<svg>` is 1) | at most 24 | 5, 3 |
+| elements drawn once every `<use>`, and every reference to a `<mask>`, `<pattern>` or `<clipPath>`, is expanded | at most 4,000 | 452, 332 |
+| filter primitives (`<fe…>` elements plus CSS filter functions) | at most 32 | 0, 0 |
+| filtered elements, counted the same way | at most 32 | 0, 0 |
+| `feGaussianBlur` / `feDropShadow` `stdDeviation`; lengths in CSS `blur()` / `drop-shadow()` (px only) | at most 50 | – |
+| `feTurbulence` `numOctaves` | whole number, at most 4 | – |
+| `feMorphology` `radius` | at most 20 | – |
+| `feConvolveMatrix` `order` | whole number, at most 5 | – |
+| animation duration: CSS `animation-duration`, the duration in `animation`, SMIL `dur`, `max`, `repeatDur` | at least 0.5 s | 3.2 s, 5.1 s |
+| `viewBox` | positive width and height, every number within ±100,000 | `0 0 1600 1000` |
+
+References that multiply work go on elements, so they can be counted: in `<style>`, `url(#id)` may point at gradients only, and `filter` may not be set there. Filters go on elements (`filter="url(#f)"` or `style="filter:…"`); `filter` values take only `url(#id)`, the CSS filter functions (`blur`, `drop-shadow`, `brightness`, `contrast`, `grayscale`, `hue-rotate`, `invert`, `opacity`, `saturate`, `sepia`) and colors, no `var()` or `calc()`. `backdrop-filter` and `primitiveUnits="objectBoundingBox"` are refused. Animation durations must be written out (no `var()` or `calc()`; the `animation` shorthand holds only names, numbers and times); delays are free. `<marker>` is not allowed (it repeats at every vertex), nor `href` and `xlink:href` on one element. Around a `#fragment` only ASCII spaces count. The minimum duration does not by itself stop flashing; keep to the three-flashes rule above. The numbers are `SKIN_LIMITS.scene…` in `shared/skin-validate.js`; `sceneStats(text)` returns a scene's counts.
 
 ### What the bridge injects
 

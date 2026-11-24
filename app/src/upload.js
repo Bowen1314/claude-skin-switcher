@@ -7,6 +7,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const { colorsProblem } = require('./library')
+const { REF } = require('./skin-render')
 
 const SKIN_MAX_BYTES = 200 * 1024
 const SCENE_MAX_BYTES = 480 * 1024
@@ -26,7 +27,19 @@ const readCapped = async (file, max) => {
   return fs.promises.readFile(file, 'utf8')
 }
 
-// { ok, skin (parsed, unvalidated), scene (string|null), errors }
+// A declared remix in the folder's meta.json (as the app writes it), or null.
+const readBasedOn = async dir => {
+  try {
+    const meta = JSON.parse(await readCapped(path.join(dir, 'meta.json'), 16 * 1024))
+    const v = meta?.basedOn
+
+    return typeof v === 'string' && REF.test(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+// { ok, skin (parsed, unvalidated), scene (string|null), basedOn (string|null), errors }
 const importFolder = async dir => {
   let skin
 
@@ -47,7 +60,7 @@ const importFolder = async dir => {
     }
   }
 
-  return { ok: true, skin, scene, errors: [] }
+  return { ok: true, skin, scene, basedOn: await readBasedOn(dir), errors: [] }
 }
 
 // The same checks the gallery runs, plus makeColors. { ok, errors, payload }

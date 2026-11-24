@@ -9,17 +9,22 @@ const call = (channel, ...args) => ipcRenderer.invoke(channel, ...args)
 contextBridge.exposeInMainWorld('switcher', {
   init: () => call('app:init'),
   ready: () => call('app:ready'),
+  version: () => call('app:version'),
   status: () => call('bridge:status'),
   refresh: () => call('bridge:refresh'),
   install: () => call('bridge:install'),
   openRepo: () => call('repo:open'),
 
   library: () => call('library:list'),
+  // { library, selection, reset }: re-read on focus; reset is the ref of a stale selection.
+  refreshLibrary: () => call('library:refresh'),
   scene: ref => call('library:scene', String(ref)),
-  select: ref => call('theme:select', String(ref)),
-  setSettings: (ref, raw) => call('settings:set', String(ref), raw),
-  resetSettings: ref => call('settings:reset', String(ref)),
-  flushSettings: () => call('settings:flush'),
+  // Raw skin.json / scene.svg of a library skin and the validator's verdict.
+  code: ref => call('library:code', String(ref)),
+  // Delete a non-official skin from the library (main resets the theme if it was active).
+  deleteSkin: ref => call('library:delete', String(ref)),
+  // Apply a skin with the draft settings the window holds for it.
+  select: (ref, draft) => call('theme:select', String(ref), draft ?? null),
   saveTuned: (ref, opts) => call('library:saveTuned', String(ref), opts),
 
   galleryList: opts => call('gallery:list', opts),
@@ -32,7 +37,7 @@ contextBridge.exposeInMainWorld('switcher', {
   authWait: () => call('auth:wait'),
   authCancel: () => call('auth:cancel'),
   signOut: () => call('auth:signOut'),
-  openDevicePage: () => call('auth:openDevicePage'),
+  claimHandle: name => call('auth:claimHandle', String(name)),
 
   mySkins: () => call('upload:mine'),
   pickFolder: () => call('upload:pickFolder'),

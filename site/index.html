@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' https://claude-skins.sdigasyugfyasfgdyf.workers.dev data:; connect-src https://claude-skins.sdigasyugfyasfgdyf.workers.dev https://api.github.com; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Claude Skin Switcher: skins for the Claude desktop app</title>
+<meta name="description" content="A free desktop app for macOS and Windows that reskins the Claude desktop app. Pick a skin, tune it with a live preview, and share it in a public gallery.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0c0d0f" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Claude Skin Switcher">
+<meta property="og:description" content="Skins for the Claude desktop app: colors, type, message style and an animated backdrop that reacts to your context window.">
+<meta property="og:url" content="https://bowen1314.github.io/claude-skin-switcher/">
+<meta property="og:image" content="https://bowen1314.github.io/claude-skin-switcher/assets/tune-dark.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://bowen1314.github.io/claude-skin-switcher/">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="styles.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="./" aria-label="Claude Skin Switcher home">
+      <img src="assets/logo.png" alt="" width="28" height="28">
+      <span>Claude Skin Switcher</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a class="nav-hide-sm" href="#features">Features</a>
+      <a class="nav-hide-sm" href="#gallery">Gallery</a>
+      <a href="https://github.com/Bowen1314/claude-skin-switcher">GitHub</a>
+      <a class="nav-cta" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ hero ============ -->
+  <section class="hero" id="download" aria-labelledby="hero-title">
+    <div class="wrap">
+      <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Free and open source · macOS and Windows</span>
+      <h1 id="hero-title">Make Claude look like yours.</h1>
+      <p class="lede">Claude Skin Switcher reskins the Claude desktop app: colors, type, message style and an animated backdrop that comes alive as your context window fills. Tune it live, then share it with everyone.</p>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" id="dl-primary" href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span id="dl-primary-label">Download</span>
+          <span class="btn-sub" id="dl-primary-sub"></span>
+        </a>
+        <a class="btn btn-secondary" href="#gallery">Browse skins</a>
+      </div>
+      <p class="alt-downloads" id="dl-alt">
+        <a id="dl-mac-arm" href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">macOS (Apple silicon)</a><span class="sep" aria-hidden="true">·</span><a id="dl-mac-x64" href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">macOS (Intel)</a><span class="sep" aria-hidden="true">·</span><a id="dl-win" href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">Windows</a>
+      </p>
+      <p class="release-meta" id="dl-meta">Latest release on GitHub · MIT license</p>
+
+      <div class="hero-shot">
+        <img src="assets/tune-dark.png" width="980" height="640" alt="Claude Skin Switcher tuning the Graphite Circuit skin: a live preview on the left and sliders for dim, motion, context following and skin variables on the right.">
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ features ============ -->
+  <section class="section" id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="kicker">Features</span>
+        <h2 id="features-title">A whole new look, without touching a line of code.</h2>
+        <p>Pick a skin, adjust it with a live preview, apply it to Claude. Every open session follows within a couple of seconds.</p>
+      </div>
+
+      <div class="features">
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="13" height="16" rx="2"/><path d="M19 7v12a2 2 0 0 1-2 2H8"/></svg></div>
+          <h3>A skin library</h3>
+          <p>Start with Firefly Meadow, Graphite Circuit or Claude's own default, and keep every skin you save from the gallery side by side.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 18h12"/><path d="M20 18h0"/><circle cx="18" cy="18" r="2"/></svg></div>
+          <h3>Live tuning</h3>
+          <p>Backdrop dim, motion, panel blur and opacity, accent color, text size and bubble radius, plus the knobs each skin declares, all with a live preview.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7a5 5 0 1 0 5 5"/><circle cx="12" cy="12" r="1"/><path d="M16 3h5v5"/></svg></div>
+          <h3>A backdrop that reacts</h3>
+          <p>Animated backdrops grow busier as the conversation's context window fills: more fireflies gather, more circuit nodes light up. Or pin it to a fixed level.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <h3>Drafts, then Apply</h3>
+          <p>Changes stay a draft that only the preview shows. Click <strong>Apply changes</strong> to send them to Claude, or <strong>Discard</strong> to throw them away.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
+          <h3>A public gallery</h3>
+          <p>Browse, search and filter skins by tag. The Code tab shows the exact <code>skin.json</code> and <code>scene.svg</code> before you save anything.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg></div>
+          <h3>Share without code</h3>
+          <p>Tune a skin, choose Save as new, and upload it. Sign in with Google (the <code>openid</code> scope only) and publish under a public name you pick.</p>
+        </article>
+      </div>
+
+      <div class="shots">
+        <figure>
+          <img src="assets/library-light.png" width="980" height="640" loading="lazy" alt="The skin library in light mode: a skin's details, palette and backdrop preview.">
+          <figcaption>Library: details, palette and a live preview.</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/gallery-dark.png" width="980" height="640" loading="lazy" alt="The public gallery in dark mode, with search, tag filters and skin cards.">
+          <figcaption>Gallery: search, filter by tag, download in one click.</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/code-dark.png" width="980" height="640" loading="lazy" alt="The Code tab showing a skin's skin.json and scene.svg as plain text, with a passed safety check.">
+          <figcaption>Code: the exact files Claude receives, with the safety check result.</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/settings-light.png" width="980" height="640" loading="lazy" alt="Settings in light mode: Claude connection status, bridge plugin install, account and app info.">
+          <figcaption>Settings: Claude connection, account and app info.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ gallery ============ -->
+  <section class="section section-soft" id="gallery" aria-labelledby="gallery-title">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="kicker">Gallery</span>
+        <h2 id="gallery-title">Skins people are sharing.</h2>
+        <p>Live from the public gallery. Every skin is data only: a JSON file and an optional SVG backdrop.</p>
+      </div>
+
+      <div class="gallery-tools">
+        <label class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="gallery-search" type="search" maxlength="64" placeholder="Search skins, authors…" aria-label="Search skins" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="seg" role="group" aria-label="Sort">
+          <button type="button" data-sort="new" aria-pressed="true">Newest</button>
+          <button type="button" data-sort="popular" aria-pressed="false">Popular</button>
+        </div>
+      </div>
+      <div class="tags-bar" id="gallery-tags" role="group" aria-label="Filter by tag"></div>
+
+      <div id="gallery-status" aria-live="polite"></div>
+      <div class="grid" id="gallery-grid"></div>
+      <div class="gallery-more" id="gallery-more" hidden>
+        <button type="button" class="btn btn-secondary" id="gallery-more-btn">Load more</button>
+      </div>
+
+      <div class="app-hint">
+        <img src="assets/logo.png" alt="" width="40" height="40">
+        <p><strong>Get it in the app.</strong> Skins are saved from inside Claude Skin Switcher: open <strong>Gallery</strong>, search for the name, check the Code tab if you like, then click <strong>Save to library</strong> and <strong>Apply</strong>. To share your own, tune a skin, choose <strong>Save as new…</strong>, then <strong>Upload</strong>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ install ============ -->
+  <section class="section" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <div class="section-head">
+        <span class="kicker">Install</span>
+        <h2 id="install-title">Up and running in three steps.</h2>
+        <p>The app installs a small Claude Code bridge plugin. The plugin is what actually draws your skin inside Claude.</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <h3>Download and open</h3>
+          <p>Get the <code>.dmg</code> for macOS or the <code>.exe</code> for Windows from the <a href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">latest release</a>. The builds are not code-signed yet:</p>
+          <ul>
+            <li><strong>macOS</strong>: drag the app to Applications, right-click it, choose <strong>Open</strong>, then <strong>Open</strong> again. If macOS says the app is damaged, run <code>xattr -cr "/Applications/Claude Skin Switcher.app"</code> once.</li>
+            <li><strong>Windows</strong>: if SmartScreen appears, click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+          </ul>
+        </li>
+        <li class="step">
+          <h3>Install the bridge</h3>
+          <p>In the app, open <strong>Settings</strong> and click <strong>Install</strong> next to the Claude connection. This adds the bridge plugin to Claude Code.</p>
+        </li>
+        <li class="step">
+          <h3>Pick a skin and Apply</h3>
+          <p>Start a new Claude session (sessions already open don't load new plugins), then pick a skin and click <strong>Apply</strong>. Open sessions follow within about 2 seconds, and <strong>Settings</strong> shows <strong>Connected</strong>.</p>
+        </li>
+      </ol>
+
+      <div class="cli">
+        <strong>Prefer the terminal?</strong> Install just the plugin at the prompt of a Claude Code session, then pick a skin in <code>~/.claude-theme-switcher/selection.json</code> (see the <a href="https://github.com/Bowen1314/claude-skin-switcher#plugin-only-no-app">README</a>).
+        <pre><code>/plugin install theme-switcher --marketplace Bowen1314/claude-skin-switcher</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ safety ============ -->
+  <section class="section section-soft" id="safety" aria-labelledby="safety-title">
+    <div class="wrap safe">
+      <div class="section-head">
+        <span class="kicker">Safe by design</span>
+        <h2 id="safety-title">A skin is data. It never runs code.</h2>
+        <p>A skin is one <code>skin.json</code> and, optionally, one <code>scene.svg</code>. There is no place in it for JavaScript, a shell command, a plugin hook or a file path. The bridge that talks to Claude is fixed code from the repository; a skin only gives it values to fill in.</p>
+        <a class="safe-link" href="https://github.com/Bowen1314/claude-skin-switcher/blob/main/docs/security.md">Read the security design →</a>
+      </div>
+      <ul class="safe-list">
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>
+          <div><strong>Four layers of checks</strong><span>The gallery server and the app run the full validator; the bridge plugin reads skins strictly, and Claude applies its own backdrop rules.</span></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h6v6H9z"/></svg>
+          <div><strong>An allowlist, not a blocklist</strong><span>Backdrops are plain SVG checked element by element. Anything not on the list is refused, and size and animation speed are capped.</span></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+          <div><strong>Minimal sign-in</strong><span>Only uploading needs an account. The app asks Google for the <code>openid</code> scope alone, so the gallery never sees your email or name.</span></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h10"/><path d="M4 17h7"/></svg>
+          <div><strong>See before you save</strong><span>The gallery's Code tab shows the exact files you are about to add. Skins that several people report are hidden until reviewed.</span></div>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ final CTA ============ -->
+  <section class="section final" aria-labelledby="final-title">
+    <div class="wrap">
+      <h2 id="final-title">Give Claude a new skin.</h2>
+      <p>Free for macOS and Windows. Open source under the MIT license.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" id="dl-final" href="https://github.com/Bowen1314/claude-skin-switcher/releases/latest">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+          <span id="dl-final-label">Download</span>
+        </a>
+        <a class="btn btn-secondary" href="https://github.com/Bowen1314/claude-skin-switcher">View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <nav class="footer-links" aria-label="Footer">
+      <a href="privacy.html">Privacy</a>
+      <a href="terms.html">Terms</a>
+      <a href="https://github.com/Bowen1314/claude-skin-switcher">GitHub</a>
+      <a href="https://github.com/Bowen1314/claude-skin-switcher/issues">Issues</a>
+    </nav>
+    <span>MIT © 2026 Soso Technologies LLC</span>
+    <p class="legal-note">Not affiliated with Anthropic. Claude is a trademark of Anthropic.</p>
+  </div>
+</footer>
+</body>
+</html>

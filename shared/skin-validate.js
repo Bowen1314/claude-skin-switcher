@@ -32,12 +32,29 @@ export const SKIN_LIMITS = Object.freeze({
   shadowBlur: [0, 64],
   fontFamilyMax: 5,
   sceneMaxChars: 120000,
+  // Scene resource limits (docs/skin-format.md). The official skins use
+  // 452 elements, depth 5, no filters, and animations of 3.2s or longer.
+  sceneMaxElements: 2000,
+  sceneMaxDepth: 24,
+  sceneMaxDrawn: 4000,
+  sceneMaxFilterPrimitives: 32,
+  sceneMaxFilterUses: 32,
+  sceneMaxBlur: 50,
+  sceneMaxOctaves: 4,
+  sceneMaxMorphologyRadius: 20,
+  sceneMaxConvolveOrder: 5,
+  sceneMinAnimationSeconds: 0.5,
+  sceneMaxViewBox: 100000,
 });
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
 const HEX6_OR_8 = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+// Control characters (C0, DEL, C1), invisible ones, and the ones that change
+// text direction, which could make a name read as something else.
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f]/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/;
+// Something other than space and blank-looking letters (Hangul fillers, braille blank).
+const VISIBLE = /[^\s\u115f\u1160\u2800\u3164\uffa0\u200d]/;
 
 const ROLE_NAMES = ['accent', 'danger', 'success', 'warning', 'pro'];
 const MODES = ['light', 'dark'];
@@ -107,10 +124,10 @@ function checkText(errors, path, v, { min, max, required }) {
     return undefined;
   }
   if (CONTROL.test(v)) {
-    errors.push(`${path} must not contain control characters.`);
+    errors.push(`${path} must not contain control, invisible or text-direction characters.`);
     return undefined;
   }
-  if (min > 0 && v.trim() === '') {
+  if (min > 0 && !VISIBLE.test(v)) {
     errors.push(`${path} must not be blank.`);
     return undefined;
   }
@@ -475,23 +492,55 @@ export function validateSkin(value) {
 
 // ---------------------------------------------------------------- scene.svg
 
-// Elements a scene may use. Anything else (script, image, feImage,
-// foreignObject, iframe, a, metadata, namespaced tags...) is refused.
-const SVG_ELEMENTS = new Set(
-  [
-    'svg', 'g', 'defs', 'symbol', 'use', 'title', 'desc', 'style',
-    'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon',
-    'text', 'tspan', 'textPath',
-    'linearGradient', 'radialGradient', 'stop', 'pattern', 'clipPath', 'mask', 'marker',
-    'filter', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix',
-    'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood',
-    'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feMerge', 'feMergeNode',
-    'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence',
-    'animate', 'animateMotion', 'animateTransform', 'mpath', 'set',
-  ].map((n) => n.toLowerCase()),
-);
+// Elements a scene may use, exact case (SVG is XML). Anything else (script,
+// image, feImage, foreignObject, iframe, a, metadata, marker, namespaced
+// tags...) is refused. <marker> is out because it repeats at every vertex.
+const SVG_ELEMENTS = new Set([
+  'svg', 'g', 'defs', 'symbol', 'use', 'title', 'desc', 'style',
+  'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon',
+  'text', 'tspan', 'textPath',
+  'linearGradient', 'radialGradient', 'stop', 'pattern', 'clipPath', 'mask',
+  'filter', 'feBlend', 'feColorMatrix', 'feComponentTransfer', 'feComposite', 'feConvolveMatrix',
+  'feDiffuseLighting', 'feDisplacementMap', 'feDistantLight', 'feDropShadow', 'feFlood',
+  'feFuncA', 'feFuncB', 'feFuncG', 'feFuncR', 'feGaussianBlur', 'feMerge', 'feMergeNode',
+  'feMorphology', 'feOffset', 'fePointLight', 'feSpecularLighting', 'feSpotLight', 'feTile', 'feTurbulence',
+  'animate', 'animateMotion', 'animateTransform', 'mpath', 'set',
+]);
+const SMIL_ELEMENTS = new Set(['animate', 'animateMotion', 'animateTransform', 'set']);
+// Drawn again for every element that refers to them, like <use>.
+const REDRAWN = new Set(['mask', 'pattern', 'clipPath']);
+const GRADIENTS = new Set(['linearGradient', 'radialGradient']);
+const MAX_ERRORS = 20;
 
-// Simple substring refusals (case-insensitive). Each is linear to scan.
+// What SMIL may animate. Filter settings, href, style, class and events are left out.
+const ANIMATABLE = new Set([
+  'opacity', 'fill', 'fill-opacity', 'stroke', 'stroke-opacity', 'stroke-width', 'stroke-dasharray', 'stroke-dashoffset',
+  'stop-color', 'stop-opacity', 'flood-color', 'flood-opacity', 'color', 'visibility', 'display',
+  'transform', 'gradientTransform', 'patternTransform', 'offset', 'pathLength', 'startOffset',
+  'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'fx', 'fy', 'fr', 'width', 'height', 'd', 'points',
+  'font-size', 'letter-spacing', 'word-spacing',
+]);
+
+// Functions a style or attribute value may call (compared lower-case). No attr(),
+// env(), image(), image-set(), src(), element(), cross-fade(), paint()...
+const COLOR_FUNCTIONS = ['rgb', 'rgba', 'hsl', 'hsla', 'hwb', 'lab', 'lch', 'oklab', 'oklch', 'color'];
+const FILTER_FUNCTIONS = new Set([
+  'url', 'blur', 'drop-shadow', 'brightness', 'contrast', 'grayscale', 'hue-rotate', 'invert', 'opacity', 'saturate', 'sepia',
+  ...COLOR_FUNCTIONS,
+]);
+const CSS_FUNCTIONS = new Set([
+  ...FILTER_FUNCTIONS, 'var', 'calc', 'min', 'max', 'clamp', 'abs', 'round', 'sin', 'cos', 'color-mix', 'light-dark',
+  'translate', 'translatex', 'translatey', 'scale', 'scalex', 'scaley', 'rotate', 'skew', 'skewx', 'skewy', 'matrix',
+  'cubic-bezier', 'steps', 'linear', 'path', 'polygon', 'circle', 'ellipse', 'inset',
+  'not', 'is', 'where', 'nth-child', 'nth-last-child', 'nth-of-type', 'nth-last-of-type',
+]);
+const AT_RULES = new Set(['keyframes', '-webkit-keyframes', 'media', 'supports']);
+const NAMESPACED_ATTRS = new Set(['xlink:href', 'xml:space', 'xml:lang']);
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+
+// Simple substring refusals (case-insensitive), a second layer over the raw
+// text under the tokenizer below. Each is linear to scan.
 const REFUSED = [
   [/<script/i, '<script>'],
   [/<image/i, '<image>'],
@@ -522,17 +571,370 @@ const REFUSED = [
 
 const XML_DECL = /^<\?xml\s[^<>?]*\?>/i;
 const XML_ENTITIES = new Set(['amp', 'lt', 'gt', 'quot', 'apos']);
+const ENTITY_TEXT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+const decode = (s) => s.replace(/&(amp|lt|gt|quot|apos);/g, (_, e) => ENTITY_TEXT[e]);
 
-/**
- * Validate the text of a scene.svg. Conservative: refuses when unsure.
- * @param {unknown} text
- * @returns {{ ok: boolean, errors: string[] }}
- */
-export function validateScene(text) {
-  const errors = [];
-  if (typeof text !== 'string') return { ok: false, errors: ['scene.svg must be a string.'] };
+const NAME = '[A-Za-z_][\\w:.-]*';
+const START_TAG = new RegExp(`<(${NAME})`, 'y');
+const END_TAG = new RegExp(`</(${NAME})[ \\t\\r\\n]*>`, 'y');
+const ATTR = new RegExp(`(${NAME})[ \\t\\r\\n]*=[ \\t\\r\\n]*(?:"([^"]*)"|'([^']*)')`, 'y');
+const SPACE = /[ \t\r\n]*/y; // XML whitespace
+const NUMBER = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?';
+const TIME = new RegExp(`^(${NUMBER})(ms|s)$`, 'i');
+const PLAIN_NUMBER = new RegExp(`^${NUMBER}$`);
+const FUNCTION_CALL = /([A-Za-z_-][\w-]*)\(/g;
+// Around a #fragment only ASCII spaces: a browser reads "\u00a0#a" as a relative URL.
+const FRAGMENT_HREF = /^[ \t\r\n]*#([A-Za-z_][\w.:-]*)[ \t\r\n]*$/;
+const URL_START = /url[ \t\r\n]*\([ \t\r\n]*["']?[ \t\r\n]*(.?)/gi;
+const URL_REF = /url\([ \t\r\n]*["']?[ \t\r\n]*#([^"')\s]+)/gi;
+const COLOR_CALL = new RegExp(`(?:${COLOR_FUNCTIONS.join('|')})\\([^()]*\\)`, 'gi');
+const LENGTH = new RegExp(`(${NUMBER})([a-z%]*)`, 'gi');
+
+const numbersOf = (v) => String(v).trim().split(/[\s,]+/).map(Number);
+
+// A SMIL clock value in seconds ("2s", "1.5", "300ms", "00:01.5", "1min"), or null.
+function clockSeconds(v) {
+  const s = v.trim();
+  let m = /^(\d+):([0-5]\d):([0-5]\d(?:\.\d+)?)$/.exec(s);
+  if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+  m = /^([0-5]?\d):([0-5]\d(?:\.\d+)?)$/.exec(s);
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  m = /^(\d+(?:\.\d+)?|\.\d+)(h|min|s|ms)?$/.exec(s);
+  if (!m) return null;
+  return Number(m[1]) * { h: 3600, min: 60, s: 1, ms: 0.001 }[m[2] ?? 's'];
+}
+
+// Everything one pass over a scene learns: errors, counts, and the element tree.
+class SceneScan {
+  constructor() {
+    this.errors = [];
+    this.badElements = new Set();
+    this.nodes = [];
+    this.ids = new Map();
+    this.styleRefs = [];
+    this.stats = { elements: 0, depth: 0, drawn: 0, filterPrimitives: 0, filterUses: 0, minAnimationSeconds: null };
+  }
+
+  // At most MAX_ERRORS, so a scene full of distinct mistakes stays cheap.
+  error(msg) {
+    if (this.errors.length < MAX_ERRORS && !this.errors.includes(msg)) this.errors.push(msg);
+  }
+
+  duration(seconds, what) {
+    const s = this.stats;
+    if (s.minAnimationSeconds === null || seconds < s.minAnimationSeconds) s.minAnimationSeconds = seconds;
+    if (seconds < SKIN_LIMITS.sceneMinAnimationSeconds) {
+      this.error(`scene.svg ${what} is shorter than the ${SKIN_LIMITS.sceneMinAnimationSeconds}s minimum animation duration.`);
+    }
+  }
+
+  // blur() and drop-shadow() take px lengths up to sceneMaxBlur. Linear: each
+  // call is read once up to its closing parenthesis, or the scan stops.
+  blurs(value) {
+    const re = /(blur|drop-shadow)\(/gi;
+    for (let m; (m = re.exec(value)); ) {
+      let depth = 1;
+      let j = re.lastIndex;
+      for (; j < value.length && depth > 0; j++) depth += value[j] === '(' ? 1 : value[j] === ')' ? -1 : 0;
+      if (depth > 0) return this.error(`scene.svg has an unclosed ${m[1]}(.`);
+      const args = value
+        .slice(re.lastIndex, j - 1)
+        .replace(COLOR_CALL, ' ')
+        .replace(/#[0-9a-f]+/gi, ' ');
+      if (args.includes('(')) return this.error(`scene.svg ${m[1]}() may only hold lengths and a color.`);
+      for (const n of args.matchAll(LENGTH)) {
+        if ((n[2] !== '' && n[2].toLowerCase() !== 'px') || Math.abs(Number(n[1])) > SKIN_LIMITS.sceneMaxBlur) {
+          return this.error(`scene.svg ${m[1]}() takes px lengths up to ${SKIN_LIMITS.sceneMaxBlur}, got ${show(n[0])}.`);
+        }
+      }
+      re.lastIndex = j;
+    }
+  }
+
+  functions(value, allowed, where) {
+    for (const m of value.matchAll(FUNCTION_CALL)) {
+      if (!allowed.has(m[1].toLowerCase())) this.error(`scene.svg ${where} uses ${m[1]}(), which is not allowed (see docs/skin-format.md).`);
+    }
+  }
+
+  // A filter value: url(#id), none, or filter functions with written-out lengths.
+  // Each filter function counts as a filter primitive.
+  filterValue(value, node) {
+    this.functions(value, FILTER_FUNCTIONS, 'filter');
+    for (const m of value.matchAll(FUNCTION_CALL)) if (m[1].toLowerCase() !== 'url') this.stats.filterPrimitives++;
+    if (value.trim().toLowerCase() !== 'none') node.filtered = true;
+  }
+
+  // CSS from a <style> element (node = null) or a style attribute.
+  css(raw, node) {
+    let css = '';
+    for (let i = 0; i < raw.length; ) {
+      const open = raw.indexOf('/*', i);
+      if (open === -1) {
+        css += raw.slice(i);
+        break;
+      }
+      const close = raw.indexOf('*/', open + 2);
+      if (close === -1) return this.error('scene.svg has an unterminated CSS comment.');
+      css += raw.slice(i, open);
+      i = close + 2;
+    }
+    for (const m of css.matchAll(/@([\w-]*)/g)) {
+      if (!AT_RULES.has(m[1].toLowerCase())) this.error(`scene.svg uses @${m[1]}; only @keyframes, @media and @supports are allowed.`);
+    }
+    this.functions(css, CSS_FUNCTIONS, node ? 'a style attribute' : '<style>');
+    for (const m of css.matchAll(URL_START)) {
+      if (m[1] !== '#') this.error('scene.svg url( must be url(#id).');
+    }
+    if (!node) for (const m of css.matchAll(URL_REF)) this.styleRefs.push(m[1]);
+    this.blurs(css);
+    for (const m of css.matchAll(/(?:^|[;{\s])((?:-webkit-)?(backdrop-)?filter)\s*:\s*([^;}]*)/gi)) {
+      if (m[2]) this.error('scene.svg must not use backdrop-filter.');
+      else if (!node) this.error('scene.svg <style> must not set filter: put filter="url(#id)" on the elements, so their number can be checked.');
+      else this.filterValue(m[3], node);
+    }
+    for (const m of css.matchAll(/(?:^|[;{\s])(?:-webkit-)?animation(-duration)?\s*:\s*([^;}]*)/gi)) {
+      const decl = m[2].replace(/!\s*important\s*$/i, '');
+      if (m[1]) {
+        for (const item of decl.split(',')) {
+          const t = TIME.exec(item.trim());
+          if (!t) this.error('scene.svg animation-duration must be written out as times (no var() or calc()).');
+          else this.duration(Number(t[1]) * (t[2].toLowerCase() === 'ms' ? 0.001 : 1), `animation-duration ${show(item.trim())}`);
+        }
+        continue;
+      }
+      // Every word is a name, a number or a time, so the duration can't hide.
+      const value = decl.replace(/(?:cubic-bezier|steps|linear)\([^()]*\)/gi, ' ');
+      const words = value.split(/[\s,]+/).filter(Boolean);
+      if (!words.every((w) => /^-?[A-Za-z_][\w-]*$/.test(w) || TIME.test(w) || PLAIN_NUMBER.test(w))) {
+        this.error('scene.svg animation must write out its duration: names, numbers and times only (no var() or calc()).');
+        continue;
+      }
+      for (const item of value.split(',')) {
+        const t = item.trim().split(/\s+/).map((w) => TIME.exec(w)).find(Boolean);
+        if (t) this.duration(Number(t[1]) * (t[2].toLowerCase() === 'ms' ? 0.001 : 1), `animation duration ${show(t[0])}`);
+      }
+    }
+  }
+
+  // Per-element attribute rules. `attrs` holds raw (still entity-encoded) values.
+  element(name, attrs, node, isRoot) {
+    for (const [k, raw] of attrs) {
+      const v = decode(raw);
+      if (k === 'xmlns' || k === 'xmlns:xlink') {
+        if (!isRoot || v !== (k === 'xmlns' ? SVG_NS : XLINK_NS)) {
+          this.error(`scene.svg ${k} is only allowed on the root <svg>, as ${k === 'xmlns' ? SVG_NS : XLINK_NS}.`);
+        }
+        continue;
+      }
+      if (k.includes(':') && !NAMESPACED_ATTRS.has(k)) this.error(`scene.svg attribute ${k} is not allowed.`);
+      if (k === 'href' || k === 'xlink:href') {
+        const id = FRAGMENT_HREF.exec(v);
+        if (!id) this.error('scene.svg href / xlink:href must be a #fragment.');
+        else node.refs.push(id[1]);
+        if (id && name === 'use') node.use = id[1];
+      }
+      if (k === 'id') {
+        if (this.ids.has(v)) this.error(`scene.svg uses the id ${show(v)} twice.`);
+        else this.ids.set(v, node);
+      }
+      for (const u of v.matchAll(URL_REF)) node.refs.push(u[1]);
+      if (k === 'style') this.css(v, node);
+      else if (k === 'filter') this.filterValue(v, node);
+      else this.functions(v, CSS_FUNCTIONS, `attribute ${k}`);
+      this.blurs(v);
+    }
+    if (attrs.has('href') && attrs.has('xlink:href')) {
+      this.error(`scene.svg <${name}> must not have both href and xlink:href.`);
+    }
+    if (attrs.has('data-ctx') && attrs.has('visibility')) {
+      this.error('scene.svg elements with data-ctx must not set visibility (the bridge sets it).');
+    }
+    const L = SKIN_LIMITS;
+    const capped = (attr, max, integer = false) => {
+      if (!attrs.has(attr)) return;
+      const ns = numbersOf(decode(attrs.get(attr)));
+      if (ns.some((n) => !Number.isFinite(n) || n < 0 || n > max || (integer && !Number.isInteger(n)))) {
+        this.error(`scene.svg <${name}> ${attr} must be ${integer ? 'whole numbers' : 'numbers'} from 0 to ${max}, got ${show(attrs.get(attr))}.`);
+      }
+    };
+    if (name.startsWith('fe')) this.stats.filterPrimitives++;
+    if (name === 'feGaussianBlur' || name === 'feDropShadow') capped('stdDeviation', L.sceneMaxBlur);
+    if (name === 'feTurbulence') capped('numOctaves', L.sceneMaxOctaves, true);
+    if (name === 'feMorphology') capped('radius', L.sceneMaxMorphologyRadius);
+    if (name === 'feConvolveMatrix') capped('order', L.sceneMaxConvolveOrder, true);
+    if (name === 'filter' && decode(attrs.get('primitiveUnits') ?? '').trim() === 'objectBoundingBox') {
+      this.error('scene.svg <filter> must not use primitiveUnits="objectBoundingBox" (it makes blur sizes relative).');
+    }
+    if (SMIL_ELEMENTS.has(name)) {
+      const target = attrs.has('attributeName') ? decode(attrs.get('attributeName')).trim() : null;
+      if (target !== null && !ANIMATABLE.has(target)) {
+        this.error(`scene.svg <${name}> attributeName ${show(target)} cannot be animated (see docs/skin-format.md).`);
+      }
+      for (const attr of ['dur', 'max', 'repeatDur']) {
+        if (!attrs.has(attr)) continue;
+        const v = decode(attrs.get(attr)).trim();
+        if (v === 'indefinite' || (attr === 'dur' && v === 'media')) continue;
+        const seconds = clockSeconds(v);
+        if (seconds === null) this.error(`scene.svg <${name}> ${attr} ${show(v)} is not a clock value.`);
+        else this.duration(seconds, `<${name}> ${attr} ${show(v)}`);
+      }
+    }
+    if (isRoot) {
+      const vb = numbersOf(decode(attrs.get('viewBox') ?? ''));
+      if (vb.length === 4 && (vb.some((n) => !(Math.abs(n) <= L.sceneMaxViewBox)) || !(vb[2] > 0 && vb[3] > 0))) {
+        this.error(`scene.svg viewBox needs a positive width and height, every number from -${L.sceneMaxViewBox} to ${L.sceneMaxViewBox}.`);
+      }
+    }
+  }
+
+  // One strict pass: balanced tags, quoted attributes, text-only <style>.
+  // Stops at the first malformed spot, so it stays linear.
+  tokens(body) {
+    const L = SKIN_LIMITS;
+    const stack = [];
+    let closed = false;
+    for (let i = 0; i < body.length; ) {
+      const lt = body.indexOf('<', i);
+      const end = lt === -1 ? body.length : lt;
+      if (stack.length === 0 && end > i && /\S/.test(body.slice(i, end))) return this.error('scene.svg has text after </svg>.');
+      if (lt === -1) break;
+      if (body.startsWith('<!--', lt)) {
+        const close = body.indexOf('-->', lt + 4);
+        if (close === -1) return this.error('scene.svg has an unterminated comment.');
+        i = close + 3;
+        continue;
+      }
+      if (body[lt + 1] === '/') {
+        END_TAG.lastIndex = lt;
+        const m = END_TAG.exec(body);
+        if (!m) return this.error('scene.svg has a malformed end tag.');
+        const top = stack.pop();
+        if (!top || top.name !== m[1]) return this.error(`scene.svg closes <${m[1]}> where ${top ? `<${top.name}>` : 'nothing'} is open.`);
+        closed = stack.length === 0;
+        i = END_TAG.lastIndex;
+        continue;
+      }
+      START_TAG.lastIndex = lt;
+      const m = START_TAG.exec(body);
+      if (!m) return this.error('scene.svg has a "<" that does not start a tag.');
+      if (closed) return this.error('scene.svg has elements after </svg>.');
+      const name = m[1];
+      if (!SVG_ELEMENTS.has(name) && this.badElements.size < 5) this.badElements.add(name);
+      const attrs = new Map();
+      let p = START_TAG.lastIndex;
+      let selfClosing = false;
+      for (;;) {
+        SPACE.lastIndex = p;
+        SPACE.exec(body);
+        const gap = SPACE.lastIndex - p;
+        p = SPACE.lastIndex;
+        if (body.startsWith('/>', p)) {
+          selfClosing = true;
+          p += 2;
+          break;
+        }
+        if (body[p] === '>') {
+          p += 1;
+          break;
+        }
+        if (gap === 0) return this.error(`scene.svg <${name}> needs a space before each attribute, written name="value".`);
+        ATTR.lastIndex = p;
+        const a = ATTR.exec(body);
+        if (!a) return this.error(`scene.svg <${name}> has a malformed attribute: every attribute is name="value", quoted.`);
+        const value = a[2] ?? a[3];
+        if (/[<>]/.test(value)) return this.error(`scene.svg attribute ${a[1]} on <${name}> must not contain < or >.`);
+        if (attrs.has(a[1])) return this.error(`scene.svg <${name}> has the attribute ${a[1]} twice.`);
+        attrs.set(a[1], value);
+        p = ATTR.lastIndex;
+      }
+      const node = { name, kids: [], refs: [], use: null, filtered: false };
+      if (stack.length) stack[stack.length - 1].kids.push(node);
+      this.nodes.push(node);
+      this.element(name, attrs, node, this.nodes.length === 1);
+      if (++this.stats.elements > L.sceneMaxElements) {
+        return this.error(`scene.svg has more than ${L.sceneMaxElements} elements.`);
+      }
+      i = p;
+      if (selfClosing) continue;
+      stack.push(node);
+      this.stats.depth = Math.max(this.stats.depth, stack.length);
+      if (stack.length > L.sceneMaxDepth) return this.error(`scene.svg nests elements more than ${L.sceneMaxDepth} deep.`);
+      if (name === 'style') {
+        const close = body.indexOf('</style', p);
+        if (close === -1) return this.error('scene.svg has a <style> that is not closed.');
+        const text = body.slice(p, close);
+        if (text.includes('<')) return this.error('scene.svg <style> must hold text only (no elements or comments).');
+        this.css(decode(text), null);
+        i = close;
+      }
+    }
+    if (stack.length) this.error(`scene.svg does not close <${stack[stack.length - 1].name}>.`);
+    return undefined;
+  }
+
+  // Reference cycles, and how many elements and filters are drawn once every
+  // <use>, and every reference to a mask, pattern or clipPath, is expanded.
+  // Memoised and saturating, so fan-out can't blow it up.
+  graph() {
+    const L = SKIN_LIMITS;
+    const memo = new Map();
+    const cap = (n, max) => Math.min(n, max + 1);
+    const visit = (node) => {
+      const seen = memo.get(node);
+      if (seen === 'visiting') throw new Error('cycle');
+      if (seen) return seen;
+      memo.set(node, 'visiting');
+      let drawn = 1;
+      let filters = node.filtered ? 1 : 0;
+      for (const kid of node.kids) {
+        const r = visit(kid);
+        drawn += r.drawn;
+        filters += r.filters;
+      }
+      for (const id of node.refs) {
+        const target = this.ids.get(id);
+        if (!target) continue;
+        const r = visit(target);
+        if (id === node.use || REDRAWN.has(target.name)) {
+          drawn += r.drawn;
+          filters += r.filters;
+        }
+      }
+      const out = { drawn: cap(drawn, L.sceneMaxDrawn), filters: cap(filters, L.sceneMaxFilterUses) };
+      memo.set(node, out);
+      return out;
+    };
+    let r;
+    try {
+      r = visit(this.nodes[0]);
+    } catch {
+      return this.error('scene.svg has a reference cycle (an element that, through href or url(#...), refers back to itself).');
+    }
+    // A <style> rule can reach any number of elements, so it may only point at gradients.
+    for (const id of this.styleRefs) {
+      const target = this.ids.get(id);
+      if (target && !GRADIENTS.has(target.name)) {
+        this.error(`scene.svg <style> may use url(#id) for gradients only; put the reference to <${target.name}> on the elements.`);
+      }
+    }
+    this.stats.drawn = r.drawn;
+    this.stats.filterUses = r.filters;
+    if (r.drawn > L.sceneMaxDrawn) this.error(`scene.svg draws more than ${L.sceneMaxDrawn} elements once <use> is expanded.`);
+    if (r.filters > L.sceneMaxFilterUses) this.error(`scene.svg applies filters more than ${L.sceneMaxFilterUses} times (counting <use> copies).`);
+    if (this.stats.filterPrimitives > L.sceneMaxFilterPrimitives) {
+      this.error(`scene.svg has ${this.stats.filterPrimitives} filter primitives; at most ${L.sceneMaxFilterPrimitives}.`);
+    }
+    return undefined;
+  }
+}
+
+function inspectScene(text) {
+  const scan = new SceneScan();
+  const errors = scan.errors;
+  if (typeof text !== 'string') return { errors: ['scene.svg must be a string.'], stats: scan.stats };
   if (text.length > SKIN_LIMITS.sceneMaxChars) {
-    return { ok: false, errors: [`scene.svg has ${text.length} characters; at most ${SKIN_LIMITS.sceneMaxChars}.`] };
+    return { errors: [`scene.svg has ${text.length} characters; at most ${SKIN_LIMITS.sceneMaxChars}.`], stats: scan.stats };
   }
 
   // Optional BOM, whitespace, and one leading UTF-8 XML declaration.
@@ -558,7 +960,7 @@ export function validateScene(text) {
   }
 
   // href / xlink:href / anything:href must point at a #fragment.
-  const hrefRe = /href\s*=\s*(["']?)\s*(.?)/gi;
+  const hrefRe = /href\s*=\s*(["']?)[ \t\r\n]*(.?)/gi;
   for (let m; (m = hrefRe.exec(body)); ) {
     if (m[2] !== '#') {
       errors.push('scene.svg href / xlink:href must be a #fragment.');
@@ -569,7 +971,7 @@ export function validateScene(text) {
   if (/href(?!\s*=)/i.test(body)) errors.push('scene.svg uses href outside an attribute.');
 
   // url( must be url(#id).
-  const urlRe = /url\s*\(\s*(["']?)\s*(.?)/gi;
+  const urlRe = /url[ \t\r\n]*\([ \t\r\n]*(["']?)[ \t\r\n]*(.?)/gi;
   for (let m; (m = urlRe.exec(body)); ) {
     if (m[2] !== '#') {
       errors.push('scene.svg url( must be url(#id).');
@@ -601,17 +1003,35 @@ export function validateScene(text) {
     i = end + 3;
   }
 
-  // Element allowlist (case-insensitive; namespaced tags are refused).
-  const tagRe = /<\/?\s*([A-Za-z_][\w:.-]*)/g;
-  const bad = new Set();
-  for (let m; (m = tagRe.exec(body)); ) {
-    const name = m[1].toLowerCase();
-    if (!SVG_ELEMENTS.has(name)) bad.add(m[1]);
-    if (bad.size >= 5) break;
-  }
-  if (bad.size) errors.push(`scene.svg uses elements that are not allowed: ${[...bad].map((b) => `<${b}>`).join(', ')}.`);
   // A "<" that does not start a tag, comment or end tag is malformed.
   if (/<(?![A-Za-z_/!?])/.test(body)) errors.push('scene.svg has a stray "<".');
 
+  if (root) {
+    const before = errors.length;
+    scan.tokens(body);
+    if (scan.badElements.size) {
+      errors.push(`scene.svg uses elements that are not allowed: ${[...scan.badElements].map((b) => `<${b}>`).join(', ')}.`);
+    }
+    if (errors.length === before) scan.graph();
+  }
+  return { errors, stats: scan.stats };
+}
+
+/**
+ * Validate the text of a scene.svg. Conservative: refuses when unsure.
+ * @param {unknown} text
+ * @returns {{ ok: boolean, errors: string[] }}
+ */
+export function validateScene(text) {
+  const { errors } = inspectScene(text);
   return { ok: errors.length === 0, errors };
+}
+
+/**
+ * The counts the scene limits are checked against (for docs and tests).
+ * @param {string} text
+ * @returns {{ elements: number, depth: number, drawn: number, filterPrimitives: number, filterUses: number, minAnimationSeconds: number|null }}
+ */
+export function sceneStats(text) {
+  return inspectScene(text).stats;
 }

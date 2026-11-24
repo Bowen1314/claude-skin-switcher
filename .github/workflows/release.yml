@@ -38,6 +38,14 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Add the Google sign-in secret
+        shell: bash
+        env:
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          test -n "$GOOGLE_CLIENT_SECRET" || { echo "GOOGLE_CLIENT_SECRET repo secret is missing"; exit 1; }
+          node -e 'require("fs").writeFileSync("src/google-secret.json", JSON.stringify({ secret: process.env.GOOGLE_CLIENT_SECRET }) + "\n")'
+
       - name: Build macOS installers
         if: runner.os == 'macOS'
         run: npm run dist:mac

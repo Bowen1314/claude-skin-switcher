@@ -19,6 +19,8 @@
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   --sans: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --ease: 150ms ease-out;
+  --pop-bg: #ffffff;
+  --shadow-pop: 0 8px 24px rgba(16, 18, 22, 0.14), 0 1px 3px rgba(16, 18, 22, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -35,6 +37,8 @@
     --primary-text: #111214;
     --off: #5c616a;
     --danger: #e8735e;
+    --pop-bg: #17191c;
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
   }
 }
 
@@ -68,6 +72,53 @@ button {
   outline-offset: 2px;
 }
 
+/* ---------- scrollbars (WebKit pseudo-elements only: setting scrollbar-color
+   or scrollbar-width would switch these off in current Chromium) ---------- */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* faint at rest, clearer while the scroller is hovered or holds focus */
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--text) 7%, transparent);
+  background-clip: padding-box;
+}
+
+:hover::-webkit-scrollbar-thumb,
+:focus-within::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--text) 35%, transparent);
+}
+
+/* The library list's bar sits in the sidebar padding, so rows keep their width. */
+.theme-list {
+  margin-right: -10px;
+  padding-right: 2px;
+}
+
+/* room for the bar so right-aligned values never sit under it */
+.theme-list,
+.pane,
+.grid-wrap,
+.upload-scroll,
+.settings-scroll,
+.log {
+  scrollbar-gutter: stable;
+}
+
 .app {
   display: grid;
   grid-template-columns: 248px 1fr;
@@ -86,9 +137,18 @@ button {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 0 8px;
   font-weight: 600;
   line-height: 24px;
+}
+
+.brand-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
 }
 
 .side-label {
@@ -185,23 +245,20 @@ button {
   line-height: 18px;
 }
 
+.draft-dot,
+.attn-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .row[aria-selected='true'] .badge {
   background: var(--bg);
 }
 
-/* bridge block */
-
-.bridge {
-  flex: none;
-  max-height: 65%;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 12px;
-  padding: 12px 8px 0;
-  border-top: 1px solid var(--border);
-}
+/* bridge status (Settings > Claude connection) */
 
 .bridge-status {
   display: flex;
@@ -233,14 +290,7 @@ button {
 }
 
 .bridge-sub {
-  padding-left: 16px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 16px;
-}
-
-.bridge-sub:empty {
-  display: none;
+  color: var(--text);
 }
 
 .ghost {
@@ -301,7 +351,7 @@ button {
 
 .install-ok,
 .install-text {
-  margin: 4px 0 0 16px;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 16px;
@@ -313,7 +363,6 @@ button {
 }
 
 .install-details {
-  margin-left: 16px;
   font-size: 12px;
 }
 
@@ -338,18 +387,6 @@ button {
 .log {
   max-height: 120px;
   overflow: auto;
-}
-
-.side-links {
-  flex: none;
-  padding: 0 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 16px;
 }
 
 .tiny-link {
@@ -447,12 +484,15 @@ button {
   color: var(--text);
 }
 
-.bridge {
+/* Browse + Settings, pinned to the bottom of the sidebar */
+.side-bottom {
+  flex: none;
   margin-top: auto;
+  padding-top: 4px;
 }
 
 .bridge-error {
-  padding-left: 16px;
+  flex-basis: 100%;
   font-size: 12px;
   line-height: 16px;
   overflow-wrap: anywhere;
@@ -727,8 +767,8 @@ button {
 
 .preview {
   position: relative;
-  /* full column width, but leave room below for the fill slider and hint */
-  width: min(100cqw, (100cqh - 84px) * 1.6);
+  /* full column width, as tall as the column allows */
+  width: min(100cqw, 100cqh * 1.6);
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -854,25 +894,6 @@ button {
   color: var(--t-muted);
 }
 
-.fill-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  flex: none;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.hint {
-  flex: none;
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 16px;
-}
-
 .num {
   color: var(--muted);
   font: 11px/16px var(--mono);
@@ -897,6 +918,7 @@ input[type='range']:disabled {
   overflow-y: auto;
   border-left: 1px solid var(--border);
   padding-left: 20px;
+  padding-right: 2px;
 }
 
 .pane-note {
@@ -1034,29 +1056,37 @@ input[type='range']:disabled {
   flex: 1 1 80px;
 }
 
-input[type='color'] {
+/* colour control: swatch + hex, opens the in-app picker */
+.color-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 2px 4px 2px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--ease);
+}
+
+.color-btn:hover:not(:disabled),
+.color-btn[aria-expanded='true'] {
+  background: var(--hover);
+}
+
+.color-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.color-chip {
   flex: none;
   width: 28px;
   height: 20px;
-  padding: 0;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: none;
-  cursor: pointer;
-}
-
-input[type='color']::-webkit-color-swatch-wrapper {
-  padding: 2px;
-}
-
-input[type='color']::-webkit-color-swatch {
-  border: 0;
-  border-radius: 2px;
-}
-
-input[type='color']:disabled {
-  opacity: 0.5;
-  cursor: default;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bg) 30%, transparent);
 }
 
 .switch {
@@ -1463,13 +1493,49 @@ input[type='search']:focus,
   font-size: 11px;
 }
 
-.device-code {
-  padding: 4px 10px;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  font: 600 20px/30px var(--mono);
-  letter-spacing: 0.12em;
-  user-select: all;
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Neutral "G" mark drawn with CSS: no logo image files. */
+.g-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font: 700 11px/1 var(--sans, system-ui);
+  color: var(--text);
+}
+
+.privacy-note {
+  max-width: 460px;
+  line-height: 16px;
+}
+
+.choose-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  max-width: 460px;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.choose-name input[type='text'] {
+  width: 220px;
+}
+
+.choose-name input[aria-invalid='true'] {
+  border-color: var(--danger);
 }
 
 .mine {
@@ -1502,6 +1568,58 @@ input[type='search']:focus,
   min-width: 0;
 }
 
+/* ---------- frameless window ---------- */
+
+.drag-strip {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  -webkit-app-region: drag;
+}
+
+.platform-darwin .drag-strip {
+  display: block;
+  height: 44px;
+}
+
+.platform-win32 .drag-strip {
+  display: block;
+  height: 36px;
+}
+
+/* every control near the strip stays clickable */
+button,
+input,
+select,
+textarea,
+a,
+label,
+summary,
+[role='tab'],
+[role='switch'],
+.segmented,
+.row,
+.tile {
+  -webkit-app-region: no-drag;
+}
+
+/* macOS: the traffic lights get their own row above the sidebar header */
+.platform-darwin .sidebar {
+  padding-top: 44px;
+}
+
+.platform-darwin .view {
+  padding-top: 24px;
+}
+
+/* Windows: keep the header controls clear of the caption-button overlay (3 x 46px) */
+.platform-win32 .main-head {
+  padding-right: 138px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
@@ -1518,4 +1636,453 @@ input[type='search']:focus,
   .mock-user {
     flex: none;
   }
+}
+
+/* ---------- settings ---------- */
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 8px;
+  padding-bottom: 8px;
+}
+
+.set-heading {
+  max-width: 640px;
+  margin: 20px 0 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.set-table {
+  grid-template-columns: 140px minmax(0, 1fr);
+  max-width: 640px;
+}
+
+.set-table dt,
+.set-table dd {
+  padding: 10px 0;
+  min-height: 48px;
+}
+
+.set-table dt {
+  display: flex;
+  align-items: center;
+}
+
+.set-table dd.stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.set-link {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--accent);
+}
+
+.set-link:hover {
+  color: var(--accent);
+}
+
+.set-help {
+  max-width: 640px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---------- code tab ---------- */
+
+.skin-body.code-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.skin-body.code-mode .stage-col {
+  display: none;
+}
+
+.code-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.code-check {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.code-check.ok::before,
+.code-check.bad::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.code-check.bad {
+  color: var(--danger);
+}
+
+.code-check.bad::before {
+  background: var(--danger);
+}
+
+.code-pane .pane-note {
+  margin: 0;
+}
+
+.code-file {
+  min-width: 0;
+}
+
+.code-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.code-title {
+  margin: 0;
+  font: 600 12px/18px var(--mono);
+}
+
+.code-copy {
+  margin-left: auto;
+  font-size: 12px;
+}
+
+/* One rule for every line: no wrapping, scroll sideways (long SVG paths). */
+.code-block {
+  max-height: 280px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--sidebar);
+  font: 11px/16px var(--mono);
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  tab-size: 2;
+  user-select: text;
+}
+
+.code-block code {
+  font: inherit;
+}
+
+/* ---------- popovers (colour picker, dropdowns, menus) ---------- */
+
+.popover {
+  position: fixed;
+  z-index: 50;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--pop-bg);
+  box-shadow: var(--shadow-pop);
+  -webkit-app-region: no-drag;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 236px;
+  padding: 12px;
+}
+
+.pk-sv {
+  position: relative;
+  height: 140px;
+  border-radius: 6px;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.pk-sv-white,
+.pk-sv-black {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.pk-sv-white {
+  background: linear-gradient(to right, #fff, rgba(255, 255, 255, 0));
+}
+
+.pk-sv-black {
+  background: linear-gradient(to top, #000, rgba(0, 0, 0, 0));
+}
+
+.pk-sv-thumb,
+.pk-hue-thumb {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.pk-hue {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pk-hue-thumb {
+  top: 50%;
+  background: transparent;
+}
+
+.pk-sv:focus-visible,
+.pk-hue:focus-visible {
+  outline-offset: 2px;
+}
+
+.pk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pk-compare {
+  display: flex;
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.pk-chip {
+  display: block;
+  width: 24px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+}
+
+.pk-was {
+  cursor: pointer;
+}
+
+.pk-was:focus-visible {
+  outline-offset: -2px;
+}
+
+.pk-hex {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px/1 var(--mono);
+  user-select: text;
+}
+
+.pk-hex:focus {
+  border-color: var(--accent);
+}
+
+.pk-drop {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pk-drop:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* eyedropper glyph drawn with CSS */
+.pk-drop-icon {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-radius: 1px 50% 50% 50%;
+  transform: rotate(45deg);
+}
+
+.pk-swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 6px;
+}
+
+.pk-swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform var(--ease);
+}
+
+.pk-swatch:hover {
+  transform: scale(1.12);
+}
+
+/* delete: quieter than Apply, red only on hover */
+.ghost.subtle-danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
+  color: var(--danger);
+}
+
+.ask-title {
+  font-weight: 600;
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+}
+
+.menu-item {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.danger-item {
+  color: var(--danger);
+}
+
+/* ---------- dropdown (replaces <select>) ---------- */
+
+.dropdown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 280px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--ease), border-color var(--ease);
+}
+
+.dropdown:hover {
+  background: var(--hover);
+}
+
+.dropdown[aria-expanded='true'] {
+  border-color: var(--muted);
+}
+
+.dropdown:focus {
+  border-color: var(--border);
+}
+
+.dropdown:focus-visible {
+  border-color: var(--muted);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.dd-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* chevron drawn with borders */
+.dd-chev {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: -3px 2px 0 0;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+}
+
+.dd-list {
+  max-width: 320px;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  font-size: 12px;
+}
+
+.dd-list:focus {
+  outline: none;
+}
+
+.dd-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dd-option.active {
+  background: var(--hover);
+}
+
+.dd-check {
+  flex: none;
+  width: 14px;
+  color: var(--accent);
+  text-align: center;
+}
+
+.dd-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

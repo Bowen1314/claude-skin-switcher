@@ -8,11 +8,14 @@ const { HttpError, request, requestJson } = require('./http')
 const { OWNER } = require('./library')
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/
+// A public name (the author of uploads), as the server's POST /api/me/handle takes it.
+const HANDLE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/
 const TAG = /^[a-z0-9-]{1,20}$/
 const HEX = /^#[0-9a-fA-F]{6}$/
 const CURSOR = /^[A-Za-z0-9_\-=]{1,512}$/
+// Control, invisible and text-direction characters (same set as the validator's).
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f]/g
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060-\u2069\ufeff]/g
 
 const text = (v, max) => (typeof v === 'string' ? v.replace(CONTROL, ' ').slice(0, max) : '')
 const count = v => (Number.isSafeInteger(v) && v >= 0 ? v : 0)
@@ -34,6 +37,23 @@ const splitRef = ref => {
   checkName(author, slug)
 
   return { author, slug }
+}
+
+// "<author>.<slug>" if both parts pass the name rules, else null.
+const refOrNull = v => {
+  if (typeof v !== 'string') {
+    return null
+  }
+  const [author, slug, extra] = v.split('.')
+
+  return extra === undefined && typeof slug === 'string' && OWNER.test(author) && SLUG.test(slug) ? v : null
+}
+
+// A declared remix: the original's ref and, while it is listed, its name.
+const remixOf = raw => {
+  const basedOn = refOrNull(raw?.basedOn)
+
+  return basedOn === null ? {} : { basedOn, basedOnName: text(raw.basedOnName, 40) || null }
 }
 
 const palette = p => {
@@ -88,6 +108,7 @@ const listItem = raw => {
     preview,
     hidden: raw.hidden === true,
     reports: count(raw.reports),
+    ...remixOf(raw),
   }
 }
 
@@ -159,21 +180,32 @@ const createGallery = ({ baseUrl, fetchImpl = globalThis.fetch, readOnly = false
         scene = res.text
       }
 
-      return { skin: checked.skin, scene, author, version: Number.isSafeInteger(data.version) && data.version > 0 ? data.version : 1 }
+      return { skin: checked.skin, scene, author, version: Number.isSafeInteger(data.version) && data.version > 0 ? data.version : 1, ...remixOf(data) }
     },
 
     download: async (author, slug) => (await call(`/api/skins/${checkName(author, slug)}/download`, { method: 'POST' })).data,
     report: async (author, slug) => (await call(`/api/skins/${checkName(author, slug)}/report`, { method: 'POST' })).data,
 
+    // { handle: string|null, skins }. handle is null until a public name is chosen.
     me: async token => {
       const { data } = await call('/api/me', { headers: auth(token) })
-      const login = typeof data?.login === 'string' && OWNER.test(data.login.toLowerCase()) ? data.login.toLowerCase() : null
+      const handle = typeof data?.handle === 'string' && HANDLE.test(data.handle) ? data.handle : null
 
-      if (login === null) {
-        throw new HttpError('The gallery sent no login', { code: 'invalid' })
+      return { handle, skins: Array.isArray(data?.skins) ? data.skins.map(listItem).filter(Boolean) : [] }
+    },
+
+    // Claim the public name. Errors (409 taken / reserved / handle locked) carry the server's message.
+    claimHandle: async (token, handle) => {
+      if (typeof handle !== 'string' || !HANDLE.test(handle)) {
+        throw new HttpError('3 to 32 of a-z, 0-9 and inner hyphens', { code: 'bad-handle' })
       }
+      const { data } = await call('/api/me/handle', {
+        method: 'POST',
+        headers: { ...auth(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle }),
+      })
 
-      return { login, skins: Array.isArray(data.skins) ? data.skins.map(listItem).filter(Boolean) : [] }
+      return { handle: typeof data?.handle === 'string' && HANDLE.test(data.handle) ? data.handle : handle }
     },
 
     upload: async (token, payload) => {
@@ -193,4 +225,4 @@ const createGallery = ({ baseUrl, fetchImpl = globalThis.fetch, readOnly = false
   }
 }
 
-module.exports = { createGallery, listItem, splitRef, checkName, SLUG }
+module.exports = { createGallery, listItem, splitRef, checkName, refOrNull, SLUG, HANDLE }

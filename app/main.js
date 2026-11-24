@@ -65,16 +65,35 @@ const makeService = async () => {
   const deps = await loadDeps({ isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname })
 
   const where = { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, appDir: __dirname }
+  const googleBase = shot?.googleUrl ?? null
   const config = {
-    githubUrl: shot?.githubUrl ?? constants.GITHUB_URL,
-    clientId: shot?.clientId ?? constants.GITHUB_CLIENT_ID,
+    googleAuthUrl: googleBase ? `${googleBase}/o/oauth2/v2/auth` : constants.GOOGLE_AUTH_URL,
+    googleTokenUrl: googleBase ? `${googleBase}/token` : constants.GOOGLE_TOKEN_URL,
+    clientId: shot?.clientId ?? constants.GOOGLE_CLIENT_ID,
+    clientSecret: constants.GOOGLE_CLIENT_SECRET,
     localOwner: constants.LOCAL_OWNER,
+    // The sign-in page opens in the person's own browser; screenshot runs never open anything.
+    openExternal: url => (shot ? Promise.resolve() : shell.openExternal(url)),
+    // After the browser hands back the sign-in, put the app in front again.
+    focusApp: () => {
+      if (shot || window === null || window.isDestroyed()) {
+        return
+      }
+      if (window.isMinimized()) {
+        window.restore()
+      }
+      window.show()
+      if (process.platform === 'darwin') {
+        app.focus({ steal: true })
+      }
+      window.focus()
+    },
   }
   // Screenshot runs never write to a gallery and never reach the keychain.
   const gallery = createGallery({ baseUrl: shot?.galleryUrl ?? constants.GALLERY_URL, readOnly: shot !== null, deps })
   const tokenStore = shot
     ? memoryTokenStore(shot.token)
-    : createTokenStore({ file: path.join(app.getPath('userData'), 'github-token.bin'), getSafeStorage: () => safeStorage })
+    : createTokenStore({ file: path.join(app.getPath('userData'), 'google-refresh-token.bin'), getSafeStorage: () => safeStorage })
 
   return createService({ dir, deps, bundledDir: bundledSkinsDir(where), gallery, tokenStore, config })
 }
@@ -110,10 +129,11 @@ const plain = value => JSON.parse(JSON.stringify(value ?? null))
 const registerIpc = () => {
   handle('app:init', async () => ({
     lang,
+    platform: process.platform,
     strings: stringsFor(lang),
     library: await service.library(),
     selection: await service.selection(),
-    shot: shot ? { view: shot.view, select: shot.select } : null,
+    shot: shot ? { view: shot.view, select: shot.select, draft: shot.draft, tab: shot.tab, picker: shot.picker, del: shot.del, dropdown: shot.dropdown } : null,
     status: await currentStatus(),
   }))
 
@@ -122,6 +142,8 @@ const registerIpc = () => {
       setTimeout(capture, 400)
     }
   })
+
+  handle('app:version', () => app.getVersion())
 
   handle('bridge:status', currentStatus)
   handle('bridge:refresh', async () => {
@@ -149,11 +171,13 @@ const registerIpc = () => {
   })
 
   handle('library:list', () => service.library())
+  // Window focus: the library again, plus the selection (reset if its skin is gone or broken).
+  handle('library:refresh', () => service.refresh())
   handle('library:scene', r => service.scene(ref(r)))
-  handle('theme:select', r => service.select(r === 'default' ? 'default' : ref(r)))
-  handle('settings:set', (r, raw) => service.setSettings(ref(r), plain(raw)))
-  handle('settings:reset', r => service.resetSettings(ref(r)))
-  handle('settings:flush', () => service.flush().then(() => true))
+  handle('library:code', r => service.code(ref(r)))
+  handle('library:delete', r => service.deleteSkin(ref(r)))
+  // Apply: the theme plus the window's draft settings for it, written together.
+  handle('theme:select', (r, raw) => service.select(r === 'default' ? 'default' : ref(r), plain(raw)))
   handle('library:saveTuned', (r, opts) => {
     const o = plain(opts) ?? {}
 
@@ -170,7 +194,7 @@ const registerIpc = () => {
   handle('auth:wait', () => service.authWait())
   handle('auth:cancel', () => service.authCancel())
   handle('auth:signOut', () => service.signOut())
-  handle('auth:openDevicePage', () => shell.openExternal(constants.GITHUB_DEVICE_PAGE))
+  handle('auth:claimHandle', name => service.claimHandle(String(name ?? '')))
 
   handle('upload:mine', () => service.mine())
   handle('upload:pickFolder', async () => {
@@ -210,10 +234,30 @@ const capture = async () => {
   }
 }
 
+// No native title bar. macOS: traffic lights inset into the sidebar's top row.
+// Windows: caption buttons drawn as an overlay in the page's own colours.
+const TITLE_ROW = 44 // matches .platform-darwin .sidebar padding-top / the drag strip
+const OVERLAY_HEIGHT = 36
+const overlayColors = () => (nativeTheme.shouldUseDarkColors ? { color: '#111214', symbolColor: '#e8e9eb' } : { color: '#ffffff', symbolColor: '#17181b' })
+
+const frameOptions = () => {
+  if (process.platform === 'darwin') {
+    return { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: Math.round((TITLE_ROW - 14) / 2) } }
+  }
+  if (process.platform === 'win32') {
+    return { titleBarStyle: 'hidden', titleBarOverlay: { ...overlayColors(), height: OVERLAY_HEIGHT } }
+  }
+
+  return {}
+}
+
 const createWindow = () => {
   window = new BrowserWindow({
-    width: 980,
-    height: 640,
+    ...frameOptions(),
+    // Packaged builds take the icon from electron-builder (build/); macOS uses the bundle icon.
+    ...(process.platform !== 'darwin' && !app.isPackaged ? { icon: path.join(__dirname, 'build', 'icon.png') } : {}),
+    width: shot?.size?.width ?? 980,
+    height: shot?.size?.height ?? 640,
     minWidth: 860,
     minHeight: 560,
     useContentSize: true,
@@ -230,6 +274,12 @@ const createWindow = () => {
   })
   if (process.platform !== 'darwin') {
     window.removeMenu()
+  }
+  if (process.platform === 'win32') {
+    const recolor = () => window?.setTitleBarOverlay({ ...overlayColors(), height: OVERLAY_HEIGHT })
+
+    nativeTheme.on('updated', recolor)
+    window.on('closed', () => nativeTheme.off('updated', recolor))
   }
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', event => event.preventDefault())
@@ -283,7 +333,7 @@ if (!shot && !app.requestSingleInstanceLock()) {
     })
   })
 
-  // Write tuning that is still waiting for its debounce before the app goes.
+  // Let a selection write in progress finish before the app goes (drafts are dropped).
   app.on('before-quit', event => {
     if (quitting || service === null) {
       return

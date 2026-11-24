@@ -98,6 +98,25 @@ const createSelectionStore = dir => {
 
       return mutate(cur => ({ theme: ref, settings: cur.settings }))
     },
+    // Apply: theme and that skin's settings in one atomic write. `sparse` must
+    // already be checked against the skin; an empty object removes the entry.
+    applyTheme: (ref, sparse) => {
+      if (!REF.test(ref)) {
+        return Promise.reject(new Error(`Not a skin: ${String(ref)}`))
+      }
+
+      return mutate(cur => {
+        const settings = { ...cur.settings }
+
+        if (sparse && Object.keys(sparse).length > 0) {
+          settings[ref] = sparse
+        } else {
+          delete settings[ref]
+        }
+
+        return { theme: ref, settings }
+      })
+    },
     // Settings for one ref; `normalized` must already be checked against the skin.
     setSettings: (ref, normalized) => {
       if (!REF.test(ref)) {
@@ -117,6 +136,24 @@ const createSelectionStore = dir => {
 
         return { theme: cur.theme, settings }
       }),
+    // Before a skin is deleted: back to Claude's default if it is the active
+    // theme, and drop its settings, in one atomic write. Resolves to whether
+    // the theme was switched.
+    forget: ref => {
+      let switched = false
+
+      return mutate(cur => {
+        if (cur.theme !== ref && !(ref in cur.settings)) {
+          return null
+        }
+        const settings = { ...cur.settings }
+
+        delete settings[ref]
+        switched = cur.theme === ref
+
+        return { theme: switched ? 'default' : cur.theme, settings }
+      }).then(() => switched)
+    },
     // After a skin's files change: rewrite (new mtime) only if the file exists
     // and names that skin, so the bridge reloads it.
     touchIfActive: ref => mutate(cur => (cur.exists && cur.theme === ref ? { theme: cur.theme, settings: cur.settings } : null)),

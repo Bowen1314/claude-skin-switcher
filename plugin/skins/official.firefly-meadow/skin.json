@@ -4,7 +4,7 @@
   "name": "Firefly Meadow",
   "description": "Fireflies drift over a meadow at dusk; more gather as the context window fills.",
   "author": "official",
-  "version": 1,
+  "version": 2,
   "tags": [
     "animated",
     "cozy",
@@ -44,8 +44,8 @@
   "backdrop": {
     "scene": true,
     "glass": {
-      "blur": 14,
-      "opacity": 0.55
+      "blur": 10,
+      "opacity": 0.45
     }
   },
   "variables": [

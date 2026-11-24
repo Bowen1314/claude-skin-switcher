@@ -5,7 +5,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const test = require('node:test')
 
-const { listLibrary, makeRef, readScene, saveSkin, syncOfficial } = require('../src/library')
+const { listLibrary, makeRef, readCode, readScene, saveSkin, syncOfficial } = require('../src/library')
 const { deps } = require('./deps-helper')
 const { TINY_SCENE, tinySkin } = require('./fixtures')
 const { tempDir } = require('./helpers')
@@ -37,7 +37,7 @@ test('syncOfficial copies the bundled skins byte for byte, then only on change',
     }
     assert.deepEqual(
       (({ author, version, source }) => ({ author, version, source }))(JSON.parse(fs.readFileSync(path.join(lib, ref, 'meta.json'), 'utf8'))),
-      { author: 'official', version: 1, source: 'bundled' },
+      { author: 'official', version: JSON.parse(fs.readFileSync(path.join(BUNDLED, ref, 'skin.json'), 'utf8')).version, source: 'bundled' },
     )
   }
   assert.deepEqual(await syncOfficial({ bundledDir: BUNDLED, libDir: lib, deps: d }), [])
@@ -47,11 +47,12 @@ test('syncOfficial copies the bundled skins byte for byte, then only on change',
 
   // A newer copy saved from the gallery is not reverted by the bundled one.
   const metaFile = path.join(lib, 'official.firefly-meadow', 'meta.json')
+  const newer = JSON.parse(fs.readFileSync(path.join(BUNDLED, 'official.firefly-meadow', 'skin.json'), 'utf8')).version + 1
 
-  fs.writeFileSync(metaFile, JSON.stringify({ author: 'official', version: 2, source: 'gallery' }))
+  fs.writeFileSync(metaFile, JSON.stringify({ author: 'official', version: newer, source: 'gallery' }))
   fs.appendFileSync(path.join(lib, 'official.firefly-meadow', 'scene.svg'), ' ')
   assert.deepEqual(await syncOfficial({ bundledDir: BUNDLED, libDir: lib, deps: d }), [])
-  assert.equal(JSON.parse(fs.readFileSync(metaFile, 'utf8')).version, 2)
+  assert.equal(JSON.parse(fs.readFileSync(metaFile, 'utf8')).version, newer)
 })
 
 test('listLibrary: officials first, broken skins become rows with errors', async t => {
@@ -133,4 +134,35 @@ test('saveSkin validates, swaps the folder in, and refuses bad input', async t =
   assert.equal((await saveSkin({ libDir: lib, owner: 'alice', skin: { format: 1 }, meta: {}, deps: d })).ok, false)
   await assert.rejects(readScene(lib, '../alice.tiny', d), /not a skin name/)
   assert.deepEqual(fs.readdirSync(lib), ['alice.tiny'])
+})
+
+test('readCode returns the files on disk byte for byte, with the validator verdict', async t => {
+  const d = await deps()
+  const lib = path.join(tempDir(t), 'skins')
+
+  await syncOfficial({ bundledDir: BUNDLED, libDir: lib, deps: d })
+  const code = await readCode(lib, 'official.firefly-meadow', d)
+
+  assert.equal(code.skinJson, fs.readFileSync(path.join(BUNDLED, 'official.firefly-meadow', 'skin.json'), 'utf8'))
+  assert.equal(code.sceneSvg, fs.readFileSync(path.join(BUNDLED, 'official.firefly-meadow', 'scene.svg'), 'utf8'))
+  assert.deepEqual(code.check, { ok: true, errors: [] })
+
+  const { backdrop, variables, ...flatSkin } = tinySkin()
+
+  put(lib, 'local.flat', { 'skin.json': { ...flatSkin, slug: 'flat' } })
+  const flat = await readCode(lib, 'local.flat', d)
+
+  assert.equal(flat.sceneSvg, null, 'no scene for a skin without a backdrop scene')
+  assert.equal(flat.check.ok, true)
+
+  put(lib, 'local.evil', { 'skin.json': { ...tinySkin(), slug: 'evil', backdrop: { scene: true } }, 'scene.svg': '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' })
+  const evil = await readCode(lib, 'local.evil', d)
+
+  assert.equal(evil.check.ok, false)
+  assert.ok(evil.check.errors.every(e => e.startsWith('scene: ')))
+  assert.match(evil.sceneSvg, /<script>/, 'the raw text is still shown')
+
+  put(lib, 'local.bad', { 'skin.json': '{oops' })
+  assert.equal((await readCode(lib, 'local.bad', d)).check.ok, false)
+  await assert.rejects(readCode(lib, '../x', d))
 })

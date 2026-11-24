@@ -4,7 +4,7 @@
   "name": "Graphite Circuit",
   "description": "Graphite and one signal cyan over a faint circuit grid; more nodes light up as the context fills.",
   "author": "official",
-  "version": 1,
+  "version": 2,
   "tags": [
     "animated",
     "minimal",
@@ -44,8 +44,8 @@
   "backdrop": {
     "scene": true,
     "glass": {
-      "blur": 10,
-      "opacity": 0.72
+      "blur": 8,
+      "opacity": 0.45
     }
   },
   "style": {

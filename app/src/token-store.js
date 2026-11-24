@@ -1,6 +1,6 @@
 'use strict'
 
-// The GitHub token, encrypted with Electron's safeStorage in userData.
+// The Google refresh token, encrypted with Electron's safeStorage in userData.
 // safeStorage is touched lazily: only when a token file exists or a token is
 // being saved, so people who never sign in never reach the keychain.
 

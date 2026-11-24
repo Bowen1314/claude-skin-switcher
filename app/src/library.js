@@ -12,6 +12,8 @@ const { renameWithRetry } = require('./atomic')
 const { REF, colorsInput, parseSkin } = require('./skin-render')
 
 const OWNER = /^[a-z0-9][a-z0-9-]{0,38}$/
+// Windows opens a device, not a folder, for "con.anything" and the like.
+const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com\d|lpt\d)$/
 const SOURCES = new Set(['bundled', 'gallery', 'upload', 'local'])
 const SKIN_MAX_BYTES = 200 * 1024
 const SCENE_MAX_BYTES = 480 * 1024 // 120,000 chars of up to 4 UTF-8 bytes; the char limit is checked after reading
@@ -20,9 +22,10 @@ const skinsDir = stateDir => path.join(stateDir, 'skins')
 
 // Builds a ref from a validated owner and slug; null if either is unusable.
 const makeRef = (owner, slug) => {
-  const ref = `${String(owner).toLowerCase()}.${slug}`
+  const lower = String(owner).toLowerCase()
+  const ref = `${lower}.${slug}`
 
-  return OWNER.test(String(owner).toLowerCase()) && REF.test(ref) ? ref : null
+  return OWNER.test(lower) && !WINDOWS_DEVICE.test(lower) && REF.test(ref) ? ref : null
 }
 
 const readCapped = async (file, max) => {
@@ -69,6 +72,8 @@ const checkMeta = (raw, owner, rawVersion) => {
     author: typeof meta.author === 'string' && OWNER.test(meta.author) ? meta.author : owner,
     version: Number.isSafeInteger(meta.version) && meta.version > 0 ? meta.version : Number.isSafeInteger(rawVersion) && rawVersion > 0 ? rawVersion : null,
     source: SOURCES.has(meta.source) ? meta.source : owner === 'official' ? 'bundled' : 'local',
+    // A remix: the gallery skin this one was made from, "<author>.<slug>".
+    ...(typeof meta.basedOn === 'string' && REF.test(meta.basedOn) ? { basedOn: meta.basedOn } : {}),
   }
 }
 
@@ -170,6 +175,47 @@ const readScene = async (libDir, ref, deps) => {
   return text
 }
 
+// The two files the bridge reads, as text, plus the validator's verdict on
+// them (shared/skin-validate.js only). Used for the Code tab.
+const codeOf = (skinText, sceneText, deps) => {
+  const errors = []
+  let wantsScene = false
+
+  try {
+    const checked = deps.validateSkin(JSON.parse(skinText))
+
+    if (checked.ok) {
+      wantsScene = checked.skin.backdrop?.scene === true
+    } else {
+      errors.push(...checked.errors)
+    }
+  } catch (error) {
+    errors.push(`skin.json: ${String(error?.message ?? error)}`)
+  }
+  if (wantsScene) {
+    const sceneCheck = typeof sceneText === 'string' ? deps.validateScene(sceneText) : { ok: false, errors: ['scene.svg is missing'] }
+
+    errors.push(...sceneCheck.errors.map(e => `scene: ${e}`))
+  }
+
+  return { skinJson: skinText, sceneSvg: wantsScene && typeof sceneText === 'string' ? sceneText : null, check: { ok: errors.length === 0, errors: errors.slice(0, 20) } }
+}
+
+// The raw files of a library skin, exactly as they sit on disk.
+const readCode = async (libDir, ref, deps) => {
+  if (!REF.test(ref)) {
+    throw new Error('not a skin name')
+  }
+  const dir = path.join(libDir, ref)
+  const skinText = await readCapped(path.join(dir, 'skin.json'), SKIN_MAX_BYTES)
+  const sceneText = await readOptional(path.join(dir, 'scene.svg'), SCENE_MAX_BYTES)
+
+  return codeOf(skinText, sceneText, deps)
+}
+
+// skin.json exactly as saveSkin writes it for this owner and meta.
+const skinFileText = (skin, author, version) => `${JSON.stringify({ ...skin, author, ...(version !== null ? { version } : {}) }, null, 2)}\n`
+
 const rand = () => crypto.randomBytes(4).toString('hex')
 
 // Writes a skin folder in one swap: staging sibling, then rename.
@@ -213,6 +259,30 @@ const writeSkinDir = async (libDir, ref, files) => {
   return dest
 }
 
+// Deletes one library skin folder. Refuses official skins (syncOfficial would
+// bring them back), anything that is not a plain ref, and any path that does not
+// resolve to a direct child of the skins folder.
+const removeSkinDir = async (libDir, ref) => {
+  if (typeof ref !== 'string' || !REF.test(ref) || ref.includes('..') || ref.includes('/') || ref.includes('\\')) {
+    throw new Error(`Not a skin name: ${String(ref)}`)
+  }
+  if (ref.split('.')[0] === 'official') {
+    throw new Error('Built-in skins cannot be deleted')
+  }
+  const base = path.resolve(libDir)
+  const dir = path.resolve(base, ref)
+
+  if (path.dirname(dir) !== base || path.basename(dir) !== ref) {
+    throw new Error(`Not inside the skins folder: ${ref}`)
+  }
+  const stat = await fs.promises.lstat(dir)
+
+  if (!stat.isDirectory()) {
+    throw new Error(`${ref} is not a skin folder`)
+  }
+  await fs.promises.rm(dir, { recursive: true, force: false })
+}
+
 // Validates and saves a skin under <owner>.<slug>. Returns { ok, ref, errors }.
 const saveSkin = async ({ libDir, owner, skin, scene, meta, deps }) => {
   const checked = deps.validateSkin(skin)
@@ -246,9 +316,7 @@ const saveSkin = async ({ libDir, owner, skin, scene, meta, deps }) => {
   }
   // The author is always the ref's owner, whatever the caller's meta says.
   const m = { ...checkMeta(meta, owner.toLowerCase(), null), author: owner.toLowerCase() }
-  const body = { ...checked.skin, author: m.author, ...(m.version !== null ? { version: m.version } : {}) }
-
-  files['skin.json'] = `${JSON.stringify(body, null, 2)}\n`
+  files['skin.json'] = skinFileText(checked.skin, m.author, m.version)
   files['meta.json'] = `${JSON.stringify({ ...m, savedAt: Date.now() }, null, 2)}\n`
   await writeSkinDir(libDir, ref, files)
 
@@ -313,4 +381,4 @@ const syncOfficial = async ({ bundledDir, libDir, deps }) => {
   return changed
 }
 
-module.exports = { OWNER, skinsDir, makeRef, readEntry, listLibrary, readScene, writeSkinDir, saveSkin, syncOfficial, colorsProblem }
+module.exports = { OWNER, skinsDir, makeRef, readEntry, listLibrary, readScene, readCode, codeOf, skinFileText, checkMeta, writeSkinDir, saveSkin, syncOfficial, colorsProblem, removeSkinDir }

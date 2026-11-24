@@ -1,28 +1,50 @@
 // Request handler for the public skin gallery (Cloudflare Worker + D1).
 // Pure: everything external (D1, fetch, clock) comes in through env/deps, so
-// the tests can drive it with a fake D1 and a stubbed GitHub.
+// the tests can drive it with a fake D1 and a stubbed Google JWKS.
+//
+// Sign-in: `Authorization: Bearer <Google ID token>` (openid scope only). The
+// account key is HMAC-SHA256(sub, IP_SALT); the raw sub is never stored, and
+// no email or name is ever requested, stored or logged.
 
 import { validateSkin, validateScene } from '../../shared/skin-validate.js';
+import { skinFingerprint } from '../../shared/fingerprint.js';
 
 export const LIMITS = Object.freeze({
   bodyMaxBytes: 300 * 1024,
+  smallBodyMaxBytes: 1024,
   listDefault: 24,
   listMax: 50,
   uploadsPerDay: 10,
+  handleClaimsPerDay: 10,
   reportsToHide: 3,
-  tokenCacheMs: 60 * 60 * 1000,
   dayMs: 24 * 60 * 60 * 1000,
   queryMaxChars: 64,
   banReasonMax: 200,
   meMax: 200,
+  tokenMaxChars: 4096,
+  clockLeewayS: 60,
+  jwksDefaultMaxAgeS: 3600,
+  jwksMinMaxAgeS: 60,
+  jwksMaxMaxAgeS: 24 * 3600,
+  jwksRefetchCooldownMs: 60 * 1000,
+  backfillDefault: 5,
+  backfillMax: 50,
+  fingerprintHolders: 20,
 });
 
-const REPO_URL = 'https://github.com/Bowen1314/claude-theme-switcher';
-const LOGIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,38})$/;
+const GOOGLE_JWKS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+const GOOGLE_ISSUERS = new Set(['accounts.google.com', 'https://accounts.google.com']);
+// Public author names: handles, plus "official" for the built-ins (admin only).
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])$/;
+const AUTHOR_RE = HANDLE_RE;
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$/;
 const TAG_RE = /^[a-z0-9-]{1,20}$/;
-const TOKEN_RE = /^[A-Za-z0-9_.\-]{1,255}$/;
-const RESERVED_LOGINS = new Set(['official', 'default']);
+const REF_RE = /^([a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9]))\.([a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9]))$/;
+const SUB_HASH_RE = /^[0-9a-f]{64}$/;
+const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const RESERVED_HANDLES = new Set(['official', 'default', 'local', 'admin', 'root', 'support', 'anthropic', 'claude', 'gallery', 'api']);
+// Windows device names too: the app saves skins in a folder named <handle>.<slug>.
+export const isReservedHandle = (h) => RESERVED_HANDLES.has(h) || h.startsWith('official') || /^(?:con|prn|aux|nul|com\d|lpt\d)$/.test(h);
 const DEFAULT_ACCENT = '#d97757';
 
 // ------------------------------------------------------------------ helpers
@@ -169,64 +191,156 @@ function listItem(row) {
     hasScene: row.has_scene === 1,
     updatedAt: row.updated_at,
     preview: previewOf(colors),
+    ...basedOnFields(row),
   };
 }
 
+// A declared remix: the original's ref, and its name while it is visible.
+function basedOnFields(row) {
+  if (typeof row.based_on !== 'string' || !REF_RE.test(row.based_on)) return {};
+  return { basedOn: row.based_on, basedOnName: typeof row.based_on_name === 'string' ? row.based_on_name : null };
+}
+
+// The original's name for a remix, looked up by primary key.
+const BASED_ON_NAME = `(SELECT o.name FROM skins o
+    WHERE o.author = substr(skins.based_on, 1, instr(skins.based_on, '.') - 1)
+      AND o.slug = substr(skins.based_on, instr(skins.based_on, '.') + 1) AND o.hidden = 0) AS based_on_name`;
+
 const LIST_COLUMNS = `author, slug, name, description, tags, version, downloads, updated_at, hidden, reports,
-  (scene IS NOT NULL) AS has_scene, json_extract(skin_json, '$.colors') AS colors`;
+  (scene IS NOT NULL) AS has_scene, json_extract(skin_json, '$.colors') AS colors, based_on, ${BASED_ON_NAME}`;
 
 // ------------------------------------------------------------------ auth
 
-async function resolveLogin(request, env, deps) {
+// Google's signing keys, cached per isolate by kid. Tests pass their own cache.
+export function newJwksCache() {
+  return { keys: new Map(), expiresAt: 0, fetchedAt: Number.NEGATIVE_INFINITY };
+}
+const sharedJwksCache = newJwksCache();
+
+function b64urlBytes(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function b64urlJson(s) {
+  const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(b64urlBytes(s)));
+  if (!isRecord(value)) throw new Error('not an object');
+  return value;
+}
+
+function parseJwt(token) {
+  if (token.length > LIMITS.tokenMaxChars || !JWT_RE.test(token)) throw new HttpError(401, 'invalid token');
+  const [h, p, s] = token.split('.');
+  let header;
+  let payload;
+  let signature;
+  try {
+    header = b64urlJson(h);
+    payload = b64urlJson(p);
+    signature = b64urlBytes(s);
+  } catch {
+    throw new HttpError(401, 'invalid token');
+  }
+  if (header.alg !== 'RS256' || typeof header.kid !== 'string' || header.kid === '' || header.kid.length > 128) {
+    throw new HttpError(401, 'invalid token');
+  }
+  return { header, payload, signature, signingInput: new TextEncoder().encode(`${h}.${p}`) };
+}
+
+async function refreshJwks(cache, deps) {
+  let res;
+  try {
+    res = await deps.fetch(GOOGLE_JWKS_URL, { headers: { Accept: 'application/json' } });
+  } catch {
+    throw new HttpError(502, 'could not fetch Google signing keys');
+  }
+  if (!res.ok) throw new HttpError(502, `Google signing keys answered ${res.status}`);
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new HttpError(502, 'Google signing keys were unreadable');
+  }
+  const keys = new Map();
+  for (const jwk of Array.isArray(data?.keys) ? data.keys : []) {
+    if (!isRecord(jwk) || jwk.kty !== 'RSA' || typeof jwk.kid !== 'string' || typeof jwk.n !== 'string' || typeof jwk.e !== 'string') continue;
+    if (jwk.alg !== undefined && jwk.alg !== 'RS256') continue;
+    if (jwk.use !== undefined && jwk.use !== 'sig') continue;
+    try {
+      const key = await crypto.subtle.importKey(
+        'jwk',
+        { kty: 'RSA', n: jwk.n, e: jwk.e, alg: 'RS256', ext: true },
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['verify'],
+      );
+      keys.set(jwk.kid, key);
+    } catch {
+      // Skip keys WebCrypto refuses.
+    }
+  }
+  const m = /max-age=(\d+)/i.exec(res.headers.get('Cache-Control') || '');
+  const maxAge = Math.min(LIMITS.jwksMaxMaxAgeS, Math.max(LIMITS.jwksMinMaxAgeS, m ? Number(m[1]) : LIMITS.jwksDefaultMaxAgeS));
+  const now = deps.now();
+  cache.keys = keys;
+  cache.fetchedAt = now;
+  cache.expiresAt = now + maxAge * 1000;
+}
+
+async function signingKey(kid, deps) {
+  const cache = deps.jwks;
+  if (deps.now() >= cache.expiresAt) await refreshJwks(cache, deps);
+  let key = cache.keys.get(kid);
+  // Unknown kid: Google may have rotated keys. Refetch once, but not more than
+  // once a minute, so garbage kids cannot turn into a fetch per request.
+  if (!key && deps.now() - cache.fetchedAt >= LIMITS.jwksRefetchCooldownMs) {
+    await refreshJwks(cache, deps);
+    key = cache.keys.get(kid);
+  }
+  if (!key) throw new HttpError(401, 'unknown signing key');
+  return key;
+}
+
+// Verify a Google ID token and return its `sub`.
+async function verifyGoogleToken(token, env, deps) {
+  const jwt = parseJwt(token);
+  const clientId = env.GOOGLE_CLIENT_ID;
+  if (typeof clientId !== 'string' || clientId === '') throw new HttpError(503, 'sign-in not configured');
+  const key = await signingKey(jwt.header.kid, deps);
+  const ok = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, jwt.signature, jwt.signingInput);
+  if (!ok) throw new HttpError(401, 'invalid token signature');
+  const c = jwt.payload;
+  const nowS = deps.now() / 1000;
+  if (typeof c.iss !== 'string' || !GOOGLE_ISSUERS.has(c.iss)) throw new HttpError(401, 'token has the wrong issuer');
+  if (c.aud !== clientId) throw new HttpError(401, 'token has the wrong audience');
+  if (typeof c.exp !== 'number' || !Number.isFinite(c.exp) || c.exp + LIMITS.clockLeewayS <= nowS) throw new HttpError(401, 'token expired');
+  if (typeof c.iat !== 'number' || !Number.isFinite(c.iat) || c.iat - LIMITS.clockLeewayS > nowS) throw new HttpError(401, 'token issued in the future');
+  if (typeof c.sub !== 'string' || c.sub === '' || c.sub.length > 255) throw new HttpError(401, 'invalid token');
+  return c.sub;
+}
+
+function requireSalt(env) {
+  const salt = env.IP_SALT;
+  if (typeof salt !== 'string' || salt.length < 16) throw new HttpError(500, 'server is not configured');
+  return salt;
+}
+
+async function hmacHex(secret, message) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message)));
+}
+
+// Resolve the caller to { subHash, handle|null }. Banned accounts get 403.
+async function resolveAccount(request, env, deps) {
   const header = request.headers.get('Authorization') || '';
   const m = /^Bearer\s+(\S+)\s*$/i.exec(header);
-  if (!m) throw new HttpError(401, 'sign in with GitHub: Authorization: Bearer <token>');
-  const token = m[1];
-  if (!TOKEN_RE.test(token)) throw new HttpError(401, 'invalid token');
-  const now = deps.now();
-  const tokenHash = await sha256(token);
-
-  let login = await env.DB.prepare('SELECT login FROM token_cache WHERE token_hash = ? AND expires_at > ?')
-    .bind(tokenHash, now)
-    .first('login');
-
-  if (!login) {
-    let res;
-    try {
-      res = await deps.fetch('https://api.github.com/user', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'User-Agent': 'claude-skins',
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-      });
-    } catch {
-      throw new HttpError(502, 'could not reach GitHub');
-    }
-    if (res.status === 401) throw new HttpError(401, 'invalid token');
-    if (!res.ok) throw new HttpError(502, `GitHub answered ${res.status}`);
-    let data;
-    try {
-      data = await res.json();
-    } catch {
-      throw new HttpError(502, 'GitHub sent an unreadable answer');
-    }
-    login = typeof data?.login === 'string' ? data.login.toLowerCase() : '';
-    if (!LOGIN_RE.test(login)) throw new HttpError(502, 'GitHub sent an unexpected login');
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM token_cache WHERE expires_at <= ?').bind(now),
-      env.DB.prepare('INSERT OR REPLACE INTO token_cache (token_hash, login, expires_at) VALUES (?, ?, ?)').bind(
-        tokenHash,
-        login,
-        now + LIMITS.tokenCacheMs,
-      ),
-    ]);
-  }
-
-  const banned = await env.DB.prepare('SELECT 1 AS x FROM bans WHERE login = ?').bind(login).first('x');
+  if (!m) throw new HttpError(401, 'sign in with Google: Authorization: Bearer <ID token>');
+  const sub = await verifyGoogleToken(m[1], env, deps);
+  const subHash = await hmacHex(requireSalt(env), sub);
+  const banned = await env.DB.prepare('SELECT 1 AS x FROM bans WHERE sub_hash = ?').bind(subHash).first('x');
   if (banned) throw new HttpError(403, 'this account is banned from the gallery');
-  return login;
+  const handle = await env.DB.prepare('SELECT handle FROM accounts WHERE sub_hash = ?').bind(subHash).first('handle');
+  return { subHash, handle: handle ?? null };
 }
 
 async function requireAdmin(request, env) {
@@ -238,8 +352,7 @@ async function requireAdmin(request, env) {
 }
 
 async function clientHash(request, env) {
-  const salt = env.IP_SALT;
-  if (typeof salt !== 'string' || salt.length < 16) throw new HttpError(500, 'server is not configured');
+  const salt = requireSalt(env);
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
   return sha256(`${salt}:${ip}`);
 }
@@ -264,16 +377,53 @@ function checkPayload(body, { pathSlug } = {}) {
   return { skin, scene };
 }
 
-function upsertStatement(env, author, skin, scene, now) {
+function upsertStatement(env, author, skin, scene, now, { fingerprint, basedOn }) {
   return env.DB.prepare(
-    `INSERT INTO skins (author, slug, name, description, tags, version, skin_json, scene, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+    `INSERT INTO skins (author, slug, name, description, tags, version, skin_json, scene, fingerprint, based_on, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (author, slug) DO UPDATE SET
        name = excluded.name, description = excluded.description, tags = excluded.tags,
        skin_json = excluded.skin_json, scene = excluded.scene,
+       fingerprint = excluded.fingerprint, based_on = excluded.based_on,
        version = skins.version + 1, updated_at = excluded.updated_at
      RETURNING version`,
-  ).bind(author, skin.slug, skin.name, skin.description, JSON.stringify(skin.tags), JSON.stringify(skin), scene, now, now);
+  ).bind(author, skin.slug, skin.name, skin.description, JSON.stringify(skin.tags), JSON.stringify(skin), scene, fingerprint, basedOn, now, now);
+}
+
+// `basedOn` in an upload body: absent/null, or "<author>.<slug>".
+function parseBasedOn(body) {
+  const v = body.basedOn;
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'string' || !REF_RE.test(v)) throw new HttpError(400, 'basedOn must be "<author>.<slug>"');
+  return v;
+}
+
+// The remix credit to store: the one sent, else the one this skin already has.
+// Dropped when it names the skin itself or a skin that no longer exists.
+async function resolveBasedOn(env, author, slug, sent) {
+  let basedOn = sent;
+  if (basedOn === null) {
+    basedOn = (await env.DB.prepare('SELECT based_on FROM skins WHERE author = ? AND slug = ?').bind(author, slug).first('based_on')) ?? null;
+  }
+  if (basedOn === null || basedOn === `${author}.${slug}`) return null;
+  const [, a, s] = REF_RE.exec(basedOn) ?? [];
+  if (!a) return null;
+  const exists = await env.DB.prepare('SELECT 1 AS x FROM skins WHERE author = ? AND slug = ?').bind(a, s).first('x');
+  return exists ? basedOn : null;
+}
+
+// Another author's skin (hidden ones too) that draws the same thing is refused,
+// unless the upload declares itself a remix of one of them.
+async function refuseCopies(env, author, fingerprint, basedOn) {
+  const { results } = await env.DB.prepare(
+    'SELECT author, slug, name FROM skins WHERE fingerprint = ? AND author <> ? ORDER BY created_at, author, slug LIMIT ?',
+  )
+    .bind(fingerprint, author, LIMITS.fingerprintHolders)
+    .all();
+  if (results.length === 0) return;
+  if (basedOn !== null && results.some((r) => `${r.author}.${r.slug}` === basedOn)) return;
+  const first = results[0];
+  throw new HttpError(409, 'already in the gallery', { original: `${first.author}.${first.slug}`, name: first.name });
 }
 
 function savedResponse(author, slug, version) {
@@ -340,17 +490,9 @@ async function listSkins(url, env) {
 
 // ------------------------------------------------------------------ routes
 
-const HOME = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Theme Switcher for Claude: skin gallery</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#222}a{color:#b5552f}</style>
-</head><body>
-<h1>Theme Switcher for Claude</h1>
-<p>This is the public skin gallery API that the Theme Switcher app browses, installs and shares skins through.</p>
-<p><a href="${REPO_URL}">${REPO_URL}</a></p>
-<p><small>Not affiliated with Anthropic.</small></p>
-</body></html>
-`;
+// The project website (GitHub Pages) has the home page, privacy policy and terms.
+const SITE_URL = 'https://bowen1314.github.io/claude-skin-switcher/';
+const SITE_PAGES = { '': SITE_URL, privacy: `${SITE_URL}privacy.html`, terms: `${SITE_URL}terms.html` };
 
 async function route(request, env, deps) {
   const url = new URL(request.url);
@@ -368,19 +510,14 @@ async function route(request, env, deps) {
     return method;
   };
   const ref = (author, slug) => {
-    if (!LOGIN_RE.test(author) || !SLUG_RE.test(slug)) throw new HttpError(404, 'skin not found');
+    if (!AUTHOR_RE.test(author) || !SLUG_RE.test(slug)) throw new HttpError(404, 'skin not found');
   };
   const preflight = () => new Response(null, { status: 204, headers: CORS });
 
-  if (parts.length === 0) {
-    if (allow('GET') === 'preflight') return preflight();
-    return new Response(HOME, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
-        'X-Content-Type-Options': 'nosniff',
-      },
-    });
+  // /, /privacy, /terms: moved to the website.
+  if (parts.length <= 1 && Object.hasOwn(SITE_PAGES, parts[0] ?? '')) {
+    if (allow('GET', 'HEAD') === 'preflight') return preflight();
+    return new Response(null, { status: 301, headers: { Location: SITE_PAGES[parts[0] ?? ''], 'Cache-Control': 'public, max-age=86400' } });
   }
   if (parts[0] !== 'api') throw new HttpError(404, 'not found');
   const [, a, b, c, d, e] = parts;
@@ -395,14 +532,54 @@ async function route(request, env, deps) {
   // /api/me
   if (n === 2 && a === 'me') {
     allow('GET');
-    const login = await resolveLogin(request, env, deps);
+    const acct = await resolveAccount(request, env, deps);
+    if (!acct.handle) return json(200, { handle: null, skins: [] });
     const { results } = await env.DB.prepare(`SELECT ${LIST_COLUMNS} FROM skins WHERE author = ? ORDER BY updated_at DESC LIMIT ?`)
-      .bind(login, LIMITS.meMax)
+      .bind(acct.handle, LIMITS.meMax)
       .all();
     return json(200, {
-      login,
+      handle: acct.handle,
       skins: results.map((r) => ({ ...listItem(r), hidden: r.hidden === 1, reports: r.reports })),
     });
+  }
+
+  // /api/me/handle
+  if (n === 3 && a === 'me' && b === 'handle') {
+    allow('POST');
+    const acct = await resolveAccount(request, env, deps);
+    const body = await readJsonBody(request, LIMITS.smallBodyMaxBytes);
+    const handle = typeof body?.handle === 'string' ? body.handle.trim().toLowerCase() : '';
+    if (!HANDLE_RE.test(handle)) throw new HttpError(400, 'handle must be 3 to 32 of a-z, 0-9 and inner hyphens');
+    if (isReservedHandle(handle)) throw new HttpError(409, 'handle reserved');
+    if (acct.handle === handle) return json(200, { handle });
+    if (acct.handle) {
+      const owned = await env.DB.prepare('SELECT COUNT(*) AS n FROM skins WHERE author = ?').bind(acct.handle).first('n');
+      if (owned > 0) throw new HttpError(409, 'handle locked');
+    }
+    const now = deps.now();
+    const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM handle_log WHERE sub_hash = ? AND created_at > ?')
+      .bind(acct.subHash, now - LIMITS.dayMs)
+      .first('n');
+    if (recent >= LIMITS.handleClaimsPerDay) throw new HttpError(429, `at most ${LIMITS.handleClaimsPerDay} handle changes per 24 hours`);
+    // Taken by another account, or used as an author by admin-placed skins.
+    const taken = await env.DB.prepare(
+      'SELECT 1 AS x FROM accounts WHERE handle = ?1 AND sub_hash <> ?2 UNION ALL SELECT 1 AS x FROM skins WHERE author = ?1 LIMIT 1',
+    )
+      .bind(handle, acct.subHash)
+      .first('x');
+    if (taken) throw new HttpError(409, 'handle taken');
+    try {
+      await env.DB.batch([
+        env.DB.prepare('INSERT INTO accounts (sub_hash, handle, created_at) VALUES (?, ?, ?) ON CONFLICT (sub_hash) DO UPDATE SET handle = excluded.handle')
+          .bind(acct.subHash, handle, now),
+        env.DB.prepare('INSERT INTO handle_log (sub_hash, created_at) VALUES (?, ?)').bind(acct.subHash, now),
+        env.DB.prepare('DELETE FROM handle_log WHERE created_at <= ?').bind(now - LIMITS.dayMs),
+      ]);
+    } catch (err) {
+      if (/UNIQUE/i.test(String(err && err.message))) throw new HttpError(409, 'handle taken');
+      throw err;
+    }
+    return json(200, { handle });
   }
 
   // /api/skins
@@ -410,23 +587,27 @@ async function route(request, env, deps) {
     const m = allow('GET', 'POST');
     if (m === 'preflight') return preflight();
     if (m === 'GET') return listSkins(url, env);
-    const login = await resolveLogin(request, env, deps);
-    if (RESERVED_LOGINS.has(login)) throw new HttpError(403, `the login "${login}" is reserved`);
+    const acct = await resolveAccount(request, env, deps);
+    if (!acct.handle) throw new HttpError(409, 'no handle');
     const body = await readJsonBody(request, LIMITS.bodyMaxBytes);
     const { skin, scene } = checkPayload(body);
+    const sentBasedOn = parseBasedOn(body);
     const now = deps.now();
-    const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM upload_log WHERE login = ? AND created_at > ?')
-      .bind(login, now - LIMITS.dayMs)
+    const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM upload_log WHERE sub_hash = ? AND created_at > ?')
+      .bind(acct.subHash, now - LIMITS.dayMs)
       .first('n');
     if (recent >= LIMITS.uploadsPerDay) {
       throw new HttpError(429, `at most ${LIMITS.uploadsPerDay} uploads per 24 hours`);
     }
+    const fingerprint = await skinFingerprint(skin, scene);
+    const basedOn = await resolveBasedOn(env, acct.handle, skin.slug, sentBasedOn);
+    await refuseCopies(env, acct.handle, fingerprint, basedOn);
     const [saved] = await env.DB.batch([
-      upsertStatement(env, login, skin, scene, now),
-      env.DB.prepare('INSERT INTO upload_log (login, created_at) VALUES (?, ?)').bind(login, now),
+      upsertStatement(env, acct.handle, skin, scene, now, { fingerprint, basedOn }),
+      env.DB.prepare('INSERT INTO upload_log (sub_hash, created_at) VALUES (?, ?)').bind(acct.subHash, now),
       env.DB.prepare('DELETE FROM upload_log WHERE created_at <= ?').bind(now - LIMITS.dayMs),
     ]);
-    return savedResponse(login, skin.slug, saved.results[0].version);
+    return savedResponse(acct.handle, skin.slug, saved.results[0].version);
   }
 
   // /api/skins/:author/:slug[/scene.svg|/download|/report]
@@ -436,12 +617,12 @@ async function route(request, env, deps) {
       const m = allow('GET', 'DELETE');
       if (m === 'preflight') return preflight();
       if (m === 'GET') {
-        const row = await getVisible(env, b, c, 'skin_json, version');
+        const row = await getVisible(env, b, c, `skin_json, version, based_on, ${BASED_ON_NAME}`);
         const skin = JSON.parse(row.skin_json);
-        return json(200, { ...skin, author: b, version: row.version }, { cors: true, headers: { 'Cache-Control': 'public, max-age=60' } });
+        return json(200, { ...skin, author: b, version: row.version, ...basedOnFields(row) }, { cors: true, headers: { 'Cache-Control': 'public, max-age=60' } });
       }
-      const login = await resolveLogin(request, env, deps);
-      if (login !== b) throw new HttpError(403, 'you can only delete your own skins');
+      const acct = await resolveAccount(request, env, deps);
+      if (acct.handle !== b) throw new HttpError(403, 'you can only delete your own skins');
       const [del] = await env.DB.batch(deleteStatements(env, b, c));
       if (!del.meta?.changes) throw new HttpError(404, 'skin not found');
       return json(200, { ok: true, ref: `${b}.${c}` });
@@ -506,17 +687,36 @@ async function route(request, env, deps) {
     await requireAdmin(request, env);
     if (n === 3 && b === 'bans') {
       allow('POST');
-      const body = await readJsonBody(request, LIMITS.bodyMaxBytes);
-      const login = typeof body?.login === 'string' ? body.login.trim().toLowerCase() : '';
-      if (!LOGIN_RE.test(login) || RESERVED_LOGINS.has(login)) throw new HttpError(400, 'login must be a GitHub login');
+      const body = await readJsonBody(request, LIMITS.smallBodyMaxBytes);
+      if (!isRecord(body)) throw new HttpError(400, 'body must be { "handle": "..." } or { "sub_hash": "..." }');
+      const byHandle = body.handle !== undefined;
+      const bySub = body.sub_hash !== undefined;
+      if (byHandle === bySub) throw new HttpError(400, 'give exactly one of handle or sub_hash');
       const reason = body.reason === undefined ? '' : body.reason;
       if (typeof reason !== 'string' || reason.length > LIMITS.banReasonMax) throw new HttpError(400, `reason must be a string of at most ${LIMITS.banReasonMax} characters`);
-      const [, hid] = await env.DB.batch([
-        env.DB.prepare('INSERT INTO bans (login, reason, created_at) VALUES (?, ?, ?) ON CONFLICT (login) DO UPDATE SET reason = excluded.reason')
-          .bind(login, reason, deps.now()),
-        env.DB.prepare('UPDATE skins SET hidden = 1 WHERE author = ?').bind(login),
-      ]);
-      return json(200, { ok: true, login, hiddenSkins: hid.meta?.changes ?? 0 });
+      let subHash;
+      let handle;
+      if (byHandle) {
+        handle = typeof body.handle === 'string' ? body.handle.trim().toLowerCase() : '';
+        if (!HANDLE_RE.test(handle)) throw new HttpError(400, 'handle is not a valid handle');
+        subHash = await env.DB.prepare('SELECT sub_hash FROM accounts WHERE handle = ?').bind(handle).first('sub_hash');
+        if (!subHash) throw new HttpError(404, 'no account has that handle');
+      } else {
+        subHash = typeof body.sub_hash === 'string' ? body.sub_hash.trim().toLowerCase() : '';
+        if (!SUB_HASH_RE.test(subHash)) throw new HttpError(400, 'sub_hash must be 64 hex characters');
+        handle = await env.DB.prepare('SELECT handle FROM accounts WHERE sub_hash = ?').bind(subHash).first('handle');
+      }
+      const statements = [
+        env.DB.prepare('INSERT INTO bans (sub_hash, reason, created_at) VALUES (?, ?, ?) ON CONFLICT (sub_hash) DO UPDATE SET reason = excluded.reason')
+          .bind(subHash, reason, deps.now()),
+      ];
+      if (handle) statements.push(env.DB.prepare('UPDATE skins SET hidden = 1 WHERE author = ?').bind(handle));
+      const results = await env.DB.batch(statements);
+      return json(200, { ok: true, subHash, handle: handle ?? null, hiddenSkins: results[1]?.meta?.changes ?? 0 });
+    }
+    if (n === 3 && b === 'fingerprints') {
+      allow('POST');
+      return backfillFingerprints(env, await readJsonBody(request, LIMITS.smallBodyMaxBytes));
     }
     if (b === 'skins' && (n === 5 || n === 6)) {
       ref(c, d);
@@ -525,7 +725,9 @@ async function route(request, env, deps) {
         if (m === 'PUT') {
           const body = await readJsonBody(request, LIMITS.bodyMaxBytes);
           const { skin, scene } = checkPayload(body, { pathSlug: d });
-          const [saved] = await env.DB.batch([upsertStatement(env, c, skin, scene, deps.now())]);
+          const fingerprint = await skinFingerprint(skin, scene);
+          const basedOn = await resolveBasedOn(env, c, skin.slug, parseBasedOn(body));
+          const [saved] = await env.DB.batch([upsertStatement(env, c, skin, scene, deps.now(), { fingerprint, basedOn })]);
           return savedResponse(c, skin.slug, saved.results[0].version);
         }
         const [del] = await env.DB.batch(deleteStatements(env, c, d));
@@ -548,6 +750,49 @@ async function route(request, env, deps) {
   throw new HttpError(404, 'not found');
 }
 
+// Fills in missing fingerprints in pages ordered by (author, slug). Body:
+// { limit?, after?: "<author>.<slug>", dryRun? }. Rows whose stored skin can't
+// be read are listed in `failed` and skipped.
+async function backfillFingerprints(env, body) {
+  if (!isRecord(body)) throw new HttpError(400, 'body must be { "limit"?, "after"?, "dryRun"? }');
+  const limit = body.limit === undefined ? LIMITS.backfillDefault : body.limit;
+  if (!Number.isInteger(limit) || limit < 1 || limit > LIMITS.backfillMax) throw new HttpError(400, `limit must be 1 to ${LIMITS.backfillMax}`);
+  let after = ['', ''];
+  if (body.after !== undefined && body.after !== null) {
+    const m = typeof body.after === 'string' ? REF_RE.exec(body.after) : null;
+    if (!m) throw new HttpError(400, 'after must be "<author>.<slug>"');
+    after = [m[1], m[2]];
+  }
+  const dryRun = body.dryRun === true;
+  const { results } = await env.DB.prepare(
+    'SELECT author, slug, skin_json, scene FROM skins WHERE fingerprint IS NULL AND (author, slug) > (?, ?) ORDER BY author, slug LIMIT ?',
+  )
+    .bind(after[0], after[1], limit)
+    .all();
+  const updates = [];
+  const failed = [];
+  for (const row of results) {
+    try {
+      const fingerprint = await skinFingerprint(JSON.parse(row.skin_json), row.scene);
+      updates.push(env.DB.prepare('UPDATE skins SET fingerprint = ? WHERE author = ? AND slug = ? AND fingerprint IS NULL').bind(fingerprint, row.author, row.slug));
+    } catch {
+      failed.push(`${row.author}.${row.slug}`);
+    }
+  }
+  if (!dryRun && updates.length) await env.DB.batch(updates);
+  const last = results[results.length - 1];
+  const remaining = await env.DB.prepare('SELECT COUNT(*) AS n FROM skins WHERE fingerprint IS NULL').first('n');
+  return json(200, {
+    ok: true,
+    dryRun,
+    updated: dryRun ? 0 : updates.length,
+    computed: updates.length,
+    failed,
+    next: results.length === limit && last ? `${last.author}.${last.slug}` : null,
+    remaining,
+  });
+}
+
 function deleteStatements(env, author, slug) {
   return [
     env.DB.prepare('DELETE FROM skins WHERE author = ? AND slug = ?').bind(author, slug),
@@ -559,11 +804,15 @@ function deleteStatements(env, author, slug) {
 /**
  * Handle one request.
  * @param {Request} request
- * @param {{ DB: D1Database, ADMIN_TOKEN?: string, IP_SALT?: string }} env
- * @param {{ fetch?: typeof fetch, now?: () => number }} [deps]
+ * @param {{ DB: D1Database, GOOGLE_CLIENT_ID?: string, ADMIN_TOKEN?: string, IP_SALT?: string }} env
+ * @param {{ fetch?: typeof fetch, now?: () => number, jwks?: ReturnType<typeof newJwksCache> }} [deps]
  */
 export async function handle(request, env, deps = {}) {
-  const d = { fetch: deps.fetch ?? ((...args) => fetch(...args)), now: deps.now ?? (() => Date.now()) };
+  const d = {
+    fetch: deps.fetch ?? ((...args) => fetch(...args)),
+    now: deps.now ?? (() => Date.now()),
+    jwks: deps.jwks ?? sharedJwksCache,
+  };
   try {
     return await route(request, env, d);
   } catch (err) {
