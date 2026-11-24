@@ -179,3 +179,6 @@ Pushing a `v*` tag builds the macOS and Windows installers in GitHub Actions and
 MIT © 2026 Soso Technologies LLC. See [LICENSE](LICENSE).
 
 Not affiliated with Anthropic. Claude is a trademark of Anthropic.
+
+本项目积极参与并认可 [LINUX DO 社区](https://linux.do)
+
